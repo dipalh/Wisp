@@ -76,6 +76,7 @@ async def ingest_directory(
     *,
     memory_cap_mb: int = MEMORY_CAP_MB,
     progress_cb: Callable[[int, int, str, str], None] | None = None,
+    classify: bool = False,
 ) -> int:
     """Scan *root* and ingest every file into the embedding pipeline.
 
@@ -84,6 +85,8 @@ async def ingest_directory(
         memory_cap_mb: Override the RAM cap (default: MEMORY_CAP_MB).
         progress_cb:   Optional callback invoked after each file:
                        progress_cb(idx, total, display_path, engine_result)
+        classify:      If True, classify each file after ingesting and move it
+                       into root/<Category>/ or root/Unsorted/.
 
     Returns:
         Number of files successfully processed (errors are skipped).
@@ -105,6 +108,14 @@ async def ingest_directory(
         try:
             engine_result = await ingest_file(fp, display, pipeline)
             processed += 1
+            if classify:
+                file_id = hashlib.sha256(str(fp).encode()).hexdigest()[:16]
+                from services.classifier import classify_file
+                try:
+                    cr = await classify_file(fp, file_id, root)
+                    engine_result += f" → {cr.category} ({cr.confidence:.0%})"
+                except Exception as ce:
+                    engine_result += f" [classify error: {ce}]"
         except Exception as exc:
             engine_result = f"ERROR: {exc}"
 
