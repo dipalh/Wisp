@@ -5,6 +5,7 @@ Public surface
 --------------
   ingest(result, file_id)           — ContentResult → chunks → embeddings → LanceDB
   search(query, k, where)           — query string → LanceDB top-k hits
+  ask(query, k, where)              — RAG: search + Gemini answer with citations
   delete_file(file_id)              — remove a file's chunks from LanceDB
 
 These are the only functions the rest of the app (scan pipeline, search endpoint,
@@ -19,9 +20,11 @@ file actually changed.
 """
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 
 from ai.embed import embed_batch, embed_text
+from ai.generate import generate_text
 from services.embedding.chunker import Chunk, chunk_text
 from services.embedding import store
 from services.embedding.store import SearchHit
@@ -38,6 +41,14 @@ class IngestResult:
     chunk_count: int
     skipped: bool = False          # True when text was empty (nothing to embed)
     errors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class AskResult:
+    """Structured result from the RAG ``ask()`` function."""
+    answer: str                    # Gemini-generated answer grounded in the chunks
+    hits: list[SearchHit]          # The raw retrieval results used as context
+    query: str                     # The original query (echoed back for display)
 
 
 # ── Core pipeline ─────────────────────────────────────────────────────────────
@@ -153,6 +164,63 @@ def search(
     """
     query_embedding = embed_text(query)
     return store.query(query_embedding, k=k, where=where)
+
+
+# ── RAG (Retrieve → Answer → Ground) ─────────────────────────────────────────
+
+_RAG_SYSTEM = """\
+You are Wisp, an intelligent file assistant.  The user is asking about files
+on their computer.  Below are excerpts retrieved from those files.
+
+Rules:
+• Answer ONLY from the provided excerpts.  Do NOT hallucinate.
+• If the excerpts don't contain enough info, say so honestly.
+• Cite the source file name in your answer (e.g. "According to invoice.txt …").
+• Keep answers concise but complete.
+"""
+
+
+def _build_rag_prompt(query: str, hits: list[SearchHit]) -> str:
+    """Build the user-role prompt that includes retrieved context."""
+    parts: list[str] = ["### Retrieved excerpts\n"]
+    for i, h in enumerate(hits, 1):
+        label = h.file_path or h.file_id
+        parts.append(f"[{i}] Source: {label}\n{h.text}\n")
+    parts.append(f"### Question\n{query}")
+    return "\n".join(parts)
+
+
+def ask(
+    query: str,
+    k: int = 5,
+    where: dict | None = None,
+) -> AskResult:
+    """
+    RAG pipeline: retrieve relevant chunks then ask Gemini for a grounded answer.
+
+    This is the main entry-point the agent / search UI should call.
+
+    Args:
+        query: Natural-language question.
+        k:     Number of chunks to retrieve.
+        where: Optional metadata filter.
+
+    Returns:
+        AskResult with the AI answer, the raw hits, and the original query.
+    """
+    hits = search(query, k=k, where=where)
+    if not hits:
+        return AskResult(
+            answer="I couldn't find any relevant information in the indexed files.",
+            hits=[],
+            query=query,
+        )
+
+    prompt = _build_rag_prompt(query, hits)
+    # generate_text is async — run it synchronously here so callers
+    # don't need to care about the async boundary.
+    answer = asyncio.run(generate_text(prompt, system=_RAG_SYSTEM))
+    return AskResult(answer=answer, hits=hits, query=query)
 
 
 # ── Deletion ──────────────────────────────────────────────────────────────────

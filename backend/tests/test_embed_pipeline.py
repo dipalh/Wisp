@@ -7,8 +7,11 @@ Run from the ``backend/`` directory:
   Automated (14 tests, exit 0 / 1):
     python -m tests.test_embed_pipeline
 
-  Interactive (ingest 3 docs, then you type queries and see results):
+  Interactive (ingest 3 docs, then you type queries and see RAG answers):
     python -m tests.test_embed_pipeline --interactive
+
+  Interactive with your own files:
+    python -m tests.test_embed_pipeline --interactive --files path/to/a.txt path/to/b.md
 
 Structure
 ---------
@@ -24,8 +27,8 @@ Every test prints:
     ACTUAL    — what the system returned
     [PASS] / [FAIL]
 
-The interactive mode lets you TYPE a query and SEE the retrieved chunks so you
-can confirm with your own eyes that semantic retrieval is working.
+The interactive mode lets you TYPE a question and SEE an AI-generated answer
+grounded in the indexed content, plus the raw retrieval chunks for transparency.
 """
 from __future__ import annotations
 
@@ -349,9 +352,40 @@ def _print_hits(query: str, expected_top: str, hits) -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def run_interactive() -> None:
+def _ingest_user_files(file_paths: list[str]) -> dict[str, int]:
+    """Read plain-text files from disk and ingest them into the pipeline."""
+    import hashlib
+    from services.embedding import pipeline
+    from services.file_processor.models import ContentResult
+
+    counts: dict[str, int] = {}
+    for path in file_paths:
+        p = _Path(path).resolve()
+        if not p.is_file():
+            print(f"    ⚠ skipping (not a file): {p}")
+            continue
+        text = p.read_text(errors="replace")
+        file_id = hashlib.sha256(str(p).encode()).hexdigest()[:16]
+        cr = ContentResult(
+            filename=p.name,
+            file_name=p.name,
+            mime_type=p.suffix,
+            category="text",
+            content=text,
+            text=text,
+            engine_used="user-file",
+            fallback_used=False,
+            errors=[],
+        )
+        res = pipeline.ingest(cr, file_id)
+        counts[file_id] = res.chunk_count
+        print(f"    {p.name:30s}  →  {res.chunk_count} chunks")
+    return counts
+
+
+def run_interactive(user_files: list[str] | None = None) -> None:
     print("\n" + "=" * 64)
-    print("INTERACTIVE MODE — type queries, see results")
+    print("INTERACTIVE MODE — ask questions, get AI answers")
     print("=" * 64)
 
     if not _require_api_key():
@@ -361,44 +395,54 @@ def run_interactive() -> None:
 
     tmp = _create_temp_store()
     try:
-        print("\n  Ingesting 3 test documents...")
-        counts = _ingest_test_docs()
-        total = store.collection_count()
-        print(f"  Done.  {total} chunks across {len(counts)} files.\n")
-        for fid, c in counts.items():
-            fname = DOCS[fid]["filename"]
-            print(f"    {fname:25s}  →  {c} chunks")
+        if user_files:
+            print(f"\n  Ingesting {len(user_files)} user-provided file(s)...")
+            counts = _ingest_user_files(user_files)
+        else:
+            print("\n  Ingesting 3 test documents...")
+            counts = _ingest_test_docs()
 
-        print("\n  Documents available:")
-        print("    • invoice.txt       — Acme Software invoice, $12,636.00")
-        print("    • resume.txt        — Jane Smith, Senior Software Engineer")
-        print("    • meeting_notes.txt — Q3 engineering all-hands")
+        total = store.collection_count()
+        print(f"\n  Ready.  {total} chunks across {len(counts)} files.\n")
+
+        if not user_files:
+            print("  Documents available:")
+            print("    • invoice.txt       — Acme Software invoice, $12,636.00")
+            print("    • resume.txt        — Jane Smith, Senior Software Engineer")
+            print("    • meeting_notes.txt — Q3 engineering all-hands")
+
         print()
-        print("  Type a natural-language query and press Enter.")
+        print("  Ask a natural-language question and press Enter.")
         print("  Type 'quit' or Ctrl-C to exit.\n")
 
         while True:
             try:
-                query = input("  query> ").strip()
+                query = input("  question> ").strip()
             except (EOFError, KeyboardInterrupt):
                 print()
                 break
             if not query or query.lower() in ("quit", "exit", "q"):
                 break
 
-            hits = pipeline.search(query, k=5)
-            if not hits:
-                print("    (no results)\n")
-                continue
+            result = pipeline.ask(query, k=5)
 
+            # ── AI Answer ─────────────────────────────────────────────────
             print()
-            for i, h in enumerate(hits):
-                fname = DOCS.get(h.file_id, {}).get("filename", h.file_id)
-                print(f"    ── Result {i+1}  |  {fname}  |  score={h.score:.4f}  ──")
-                # Print the chunk text, indented, wrapped to ~76 cols
-                wrapped = textwrap.fill(h.text, width=76, initial_indent="    ", subsequent_indent="    ")
-                print(wrapped)
+            print("  ┌─ ANSWER ─────────────────────────────────────────────┐")
+            for line in textwrap.wrap(result.answer, width=64):
+                print(f"  │ {line}")
+            print("  └─────────────────────────────────────────────────────┘")
+
+            # ── Raw retrieved chunks (for transparency / debugging) ───────
+            if result.hits:
                 print()
+                print("  Retrieved chunks (for transparency):")
+                for i, h in enumerate(result.hits):
+                    label = h.file_path or h.file_id
+                    print(f"    [{i+1}] {label}  (score={h.score:.4f})")
+                    snippet = h.text[:120].replace("\n", " ")
+                    print(f"        \"{snippet}...\"")
+            print()
 
     finally:
         pipeline.teardown_store()
@@ -411,6 +455,19 @@ def run_interactive() -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+def _parse_files_arg() -> list[str]:
+    """Extract file paths following --files from sys.argv."""
+    if "--files" not in sys.argv:
+        return []
+    idx = sys.argv.index("--files") + 1
+    # Collect everything after --files that isn't another flag
+    paths: list[str] = []
+    while idx < len(sys.argv) and not sys.argv[idx].startswith("-"):
+        paths.append(sys.argv[idx])
+        idx += 1
+    return paths
+
+
 def main() -> None:
     interactive = "--interactive" in sys.argv or "-i" in sys.argv
 
@@ -419,7 +476,8 @@ def main() -> None:
     print("╚════════════════════════════════════════╝")
 
     if interactive:
-        run_interactive()
+        user_files = _parse_files_arg()
+        run_interactive(user_files=user_files or None)
     else:
         run_chunker_tests()
         run_pipeline_tests()
