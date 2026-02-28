@@ -41,6 +41,7 @@ Public API
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import json
@@ -118,6 +119,11 @@ ARCHIVE_EXTENSIONS = frozenset({
 EXECUTABLE_EXTENSIONS = frozenset({
     ".exe", ".dll", ".msi",
 })
+
+# Extensions eligible for auto-deepening in ask().
+# Archives, audio, video, and executables are NOT deepened — they produce
+# garbage text and waste tokens.
+DEEPEN_EXTENSIONS = TEXT_LIKE_EXTENSIONS | {".pdf"} | OFFICE_EXTENSIONS | IMAGE_EXTENSIONS
 
 
 # ── MIME type map for Gemini vision ──────────────────────────────────────────
@@ -720,6 +726,16 @@ def ingest(
     )
 
 
+async def _ingest_async(
+    result: ContentResult,
+    file_id: str,
+    **kwargs,
+) -> IngestResult:
+    """Async wrapper: runs sync ``ingest()`` in a thread so embed_batch
+    doesn't block the event loop."""
+    return await asyncio.to_thread(ingest, result, file_id, **kwargs)
+
+
 # ── Smart file-level ingest (3-Layer) ────────────────────────────────────────
 
 
@@ -767,7 +783,7 @@ async def ingest_file(
             mime_type=ext, category="directory",
             content=card, text=card, engine_used="card",
         )
-        result = ingest(cr, file_id, depth="card")
+        result = await _ingest_async(cr, file_id, depth="card")
         _scan_stats["total"] += 1
         _scan_stats["card_only"] += 1
         if fp:
@@ -822,7 +838,7 @@ async def ingest_file(
                 content=content[:MAX_EMBED_CHARS], text=content[:MAX_EMBED_CHARS],
                 engine_used=engine,
             )
-            result = ingest(cr, file_id, depth="deep")
+            result = await _ingest_async(cr, file_id, depth="deep")
             _scan_stats["total"] += 1
             _scan_stats["full"] += 1
             if fp:
@@ -872,7 +888,7 @@ async def ingest_file(
             mime_type=ext, category=_category_for_ext(ext),
             content=card, text=card, engine_used=engine,
         )
-        result = ingest(cr, file_id, depth=depth)
+        result = await _ingest_async(cr, file_id, depth=depth)
 
         _scan_stats["total"] += 1
         _scan_stats["ai_preview" if ai_summary else "card_only"] += 1
@@ -889,7 +905,7 @@ async def ingest_file(
         mime_type=ext, category=_category_for_ext(ext),
         content=card, text=card, engine_used="card",
     )
-    result = ingest(cr, file_id, depth="card")
+    result = await _ingest_async(cr, file_id, depth="card")
 
     _scan_stats["total"] += 1
     _scan_stats["card_only"] += 1
@@ -924,14 +940,14 @@ async def _ingest_deep(
             mime_type=ext, category=_category_for_ext(ext),
             content=card, text=card, engine_used="card",
         )
-        return ingest(cr, file_id, depth="card")
+        return await _ingest_async(cr, file_id, depth="card")
 
     cr = ContentResult(
         filename=str(file_path), file_name=str(file_path),
         mime_type=ext, category=_category_for_ext(ext),
         content=content, text=content, engine_used=engine,
     )
-    result = ingest(cr, file_id, depth="deep")
+    result = await _ingest_async(cr, file_id, depth="deep")
 
     # Update cache
     if fp:
@@ -1035,17 +1051,22 @@ async def ask(
     When ``auto_deepen`` is True, top-5 hits that aren't fully extracted
     get deepened via Gemini before generating the answer.
     """
-    hits = search(query, k=k, where=where)
+    hits = await asyncio.to_thread(search, query, k, where)
     if not hits:
         return AskResult(
             answer="I couldn't find any relevant information in the indexed files.",
             hits=[], query=query,
         )
 
-    # Auto-deepen non-deep files among top results
+    # Auto-deepen non-deep files among top results (allowlisted types only)
     deepened: list[str] = []
     if auto_deepen:
-        shallow_hits = [h for h in hits[:5] if h.depth != "deep" and h.file_path]
+        shallow_hits = [
+            h for h in hits[:5]
+            if h.depth != "deep"
+            and h.file_path
+            and Path(h.file_path).suffix.lower() in DEEPEN_EXTENSIONS
+        ]
         for hit in shallow_hits[:3]:
             fpath = Path(hit.file_path)
             if fpath.exists():
@@ -1053,7 +1074,7 @@ async def ask(
                 if result.depth == "deep" and result.chunk_count > 0:
                     deepened.append(hit.file_path)
         if deepened:
-            hits = search(query, k=k, where=where)
+            hits = await asyncio.to_thread(search, query, k, where)
 
     prompt = _build_rag_prompt(query, hits)
     answer = await generate_text(prompt, system=_RAG_SYSTEM)
