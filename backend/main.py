@@ -1,8 +1,11 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from api.v1.actions import router as actions_router
 from api.v1.extract import router as extract_router
+from api.v1.ingest import router as ingest_router
 from api.v1.ocr import router as ocr_router
+from api.v1.organize import router as organize_router
 from api.v1.tts import router as tts_router
 
 app = FastAPI(title="Wisp API", version="1.0.0")
@@ -17,6 +20,9 @@ app.add_middleware(
 app.include_router(extract_router, prefix="/api/v1/extract", tags=["Extract"])
 app.include_router(ocr_router, prefix="/api/v1/ocr", tags=["OCR"])
 app.include_router(tts_router, prefix="/api/v1/tts", tags=["TTS"])
+app.include_router(organize_router, prefix="/api/v1/organize", tags=["Organize"])
+app.include_router(ingest_router, prefix="/api/v1/ingest", tags=["Ingest"])
+app.include_router(actions_router, prefix="/api/v1/actions", tags=["Actions"])
 
 
 @app.get("/health")

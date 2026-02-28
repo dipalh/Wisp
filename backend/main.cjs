@@ -11,6 +11,8 @@ const rendererDevUrl = process.env.VITE_DEV_SERVER_URL;
 const apiUrl = process.env.VITE_API_URL || 'http://localhost:8000';
 
 const FILE_TAG_CACHE = new Map();
+const TREE_CACHE = new Map(); // path → { node, expiresAt }
+const TREE_CACHE_TTL_MS = 60_000; // 1 minute
 const MAX_SCAN_FILES = 600;
 const MAX_TREE_DEPTH = 8;
 const MAX_WALK_DEPTH = 10;
@@ -399,31 +401,84 @@ ipcMain.handle('folder:pick', async () => {
 
 ipcMain.handle('folder:scan', async (_, rootPath) => {
   if (!rootPath) return null;
-  return buildTreeNode(rootPath, 0, { count: 0 });
+  const cached = TREE_CACHE.get(rootPath);
+  if (cached && Date.now() < cached.expiresAt) return cached.node;
+  const node = await buildTreeNode(rootPath, 0, { count: 0 });
+  TREE_CACHE.set(rootPath, { node, expiresAt: Date.now() + TREE_CACHE_TTL_MS });
+  return node;
 });
 
 ipcMain.handle('folder:organize', async (_, rootPath) => {
-  // DISABLED: File organization logic removed (classification needs fixing)
-  console.log('[DISABLED] folder:organize called but disabled - classification logic needs work');
-  return { moved: 0, skipped: 0 };
+  try {
+    const ingestResp = await fetch(
+      `${apiUrl}/api/v1/ingest/directory?path=${encodeURIComponent(rootPath)}`,
+      { method: 'POST' }
+    );
+    if (!ingestResp.ok) throw new Error(`Ingest HTTP ${ingestResp.status}`);
+    const { indexed } = await ingestResp.json();
+
+    const suggestResp = await fetch(`${apiUrl}/api/v1/organize/suggestions`);
+    if (!suggestResp.ok) throw new Error(`Suggest HTTP ${suggestResp.status}`);
+    const suggestions = await suggestResp.json();
+
+    console.log('[organize] recommendation:', suggestions.recommendation);
+    suggestions.proposals?.forEach((p, i) =>
+      console.log(`  Proposal ${i + 1} (${p.name}): ${p.mappings?.length} file mappings`)
+    );
+
+    return { moved: indexed ?? 0, skipped: 0 };
+  } catch (err) {
+    console.error('[organize] error:', err.message);
+    return { moved: 0, skipped: 0 };
+  }
 })
 
 ipcMain.handle('files:tag', async (_, payload) => {
-  // DISABLED: Tagging logic removed (classification needs fixing)
-  console.log('[DISABLED] files:tag called but disabled - classification logic needs work');
-  return [];
+  const { rootPath, provider } = payload;
+  const files = [];
+  await walkFiles(rootPath, files, 0, 4);
+  const apiKey = process.env.GEMINI_API_KEY;
+
+  const results = await Promise.all(files.map(async (file) => {
+    const cacheKey = `${provider}:${file.path}`;
+    if (FILE_TAG_CACHE.has(cacheKey)) return FILE_TAG_CACHE.get(cacheKey);
+
+    const tags = (provider === 'api' && apiKey)
+      ? ((await geminiTags({ apiKey, fileName: file.name, filePath: file.path })) ?? localTagsFromName(file.name, file.path))
+      : localTagsFromName(file.name, file.path);
+
+    const result = { path: file.path, name: file.name, tags };
+    FILE_TAG_CACHE.set(cacheKey, result);
+    return result;
+  }));
+
+  return results;
 });
 
 ipcMain.handle('files:suggestDelete', async (_, rootPath) => {
-  // DISABLED: Delete suggestions removed (classification needs fixing)
-  console.log('[DISABLED] files:suggestDelete called but disabled - classification logic needs work');
-  return [];
+  return suggestDeleteCandidates(rootPath);
 });
 
 ipcMain.handle('files:trash', async (_, targetPath) => {
   if (!targetPath) return { ok: false };
   try {
     await shell.trashItem(targetPath);
+    TREE_CACHE.delete(path.dirname(targetPath)); // invalidate parent dir
+
+    // Record DELETE action in Python backend (fire-and-forget)
+    fetch(`${apiUrl}/api/v1/actions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'DELETE',
+        label: `Delete '${path.basename(targetPath)}'`,
+        targets: [targetPath],
+        before_state: { path: targetPath },
+        after_state: {},
+        status: 'APPLIED',
+      }),
+    }).catch(() => {}); // non-blocking; ignore if Python backend isn't running
+
     return { ok: true };
   } catch {
     return { ok: false };
