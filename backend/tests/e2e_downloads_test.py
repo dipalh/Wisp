@@ -101,7 +101,7 @@ def run_e2e():
         for q in test_queries:
             print(f"\n  Q: {q}")
             print("  " + "-" * 60)
-            result = pipeline.ask(q, k=8)
+            result = asyncio.run(pipeline.ask(q, k=8))
             print(f"  A: {result.answer[:500]}")
             sources = []
             seen = set()

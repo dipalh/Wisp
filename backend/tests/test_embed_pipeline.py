@@ -619,24 +619,28 @@ def _ingest_real_files(
     files: list[_Path],
     root: _Path | None = None,
 ) -> tuple[dict[str, int], dict[str, str]]:
-    """Extract and ingest ALL files via the dispatcher.
+    """Ingest ALL files using the 3-layer smart pipeline.
 
-    Files that can't be fully extracted still get indexed with rich metadata
-    (name, type, size, extension) so the system knows they exist.
+    Every file is handled by ``pipeline.ingest_file()``:
+      - Text/code → local extraction + full chunking (depth="deep")
+      - PDFs/office → local extraction + AI summary + full chunking (depth="deep")
+      - Images → Gemini vision caption (depth="preview")
+      - Media/archives/exe → metadata card only (depth="card")
+      - Unchanged files → cached (skipped instantly)
 
+    Bounded Gemini usage: AI summaries for PDFs/office, vision captions for images.
     Returns (counts, id_to_name).
     """
-    import asyncio as _aio
     import hashlib
     import time
+    import asyncio
     from services.embedding import pipeline
-    from services.file_processor.dispatcher import extract as dispatch_extract
-    from services.file_processor.models import ContentResult
 
     counts: dict[str, int] = {}
     id_to_name: dict[str, str] = {}
-    errors_list: list[str] = []
-    metadata_count = 0
+    preview_count = 0
+    cached_count = 0
+    error_count = 0
     total = len(files)
     start = time.time()
 
@@ -659,103 +663,36 @@ def _ingest_real_files(
         print(f"    [{idx:>4}/{total}] {short_name}", end="", flush=True)
 
         try:
-            # ── .app bundles (directories) — metadata only ────────────
-            if fpath.is_dir():
-                meta_text = _file_metadata_description(fpath)
-                cr = ContentResult(
-                    filename=fpath.name, file_name=fpath.name,
-                    mime_type="application/x-apple-app",
-                    category="application",
-                    content=meta_text, text=meta_text,
-                    engine_used="metadata", fallback_used=False, errors=[],
-                )
-                res = pipeline.ingest(cr, file_id)
-                counts[file_id] = res.chunk_count
-                metadata_count += 1
-                print(f"  → metadata [app bundle]{eta}")
-                continue
+            result = asyncio.run(pipeline.ingest_file(fpath, file_id))
+            counts[file_id] = result.chunk_count
 
-            # ── Size check for Gemini-bound media ─────────────────────
-            try:
-                size_mb = fpath.stat().st_size / (1024 * 1024)
-            except OSError:
-                size_mb = 0
-
-            ext = fpath.suffix.lower()
-
-            # Files too large for Gemini API — index with metadata
-            from services.file_processor.dispatcher import (
-                GEMINI_MIME_TYPES, TEXT_LIKE_EXTENSIONS,
-                OFFICE_MIME_TYPES, ARCHIVE_MIME_TYPES,
-            )
-            needs_gemini = (ext in GEMINI_MIME_TYPES and ext not in TEXT_LIKE_EXTENSIONS
-                           and ext not in OFFICE_MIME_TYPES and ext not in ARCHIVE_MIME_TYPES)
-
-            if needs_gemini and size_mb > MAX_GEMINI_FILE_SIZE_MB:
-                meta_text = _file_metadata_description(fpath)
-                cr = ContentResult(
-                    filename=fpath.name, file_name=fpath.name,
-                    mime_type=GEMINI_MIME_TYPES.get(ext, "application/octet-stream"),
-                    category="media",
-                    content=meta_text, text=meta_text,
-                    engine_used="metadata", fallback_used=False, errors=[],
-                )
-                res = pipeline.ingest(cr, file_id)
-                counts[file_id] = res.chunk_count
-                metadata_count += 1
-                print(f"  → metadata [{size_mb:.0f}MB, too large for API]{eta}")
-                continue
-
-            # ── Normal extraction ─────────────────────────────────────
-            file_bytes = fpath.read_bytes()
-            cr = _aio.run(dispatch_extract(file_bytes, fpath.name))
-
-            if not cr.content or not cr.content.strip():
-                # Extraction returned empty — use metadata instead
-                meta_text = _file_metadata_description(fpath)
-                cr = ContentResult(
-                    filename=fpath.name, file_name=fpath.name,
-                    mime_type=cr.mime_type or "application/octet-stream",
-                    category=cr.category or "unknown",
-                    content=meta_text, text=meta_text,
-                    engine_used="metadata", fallback_used=False, errors=[],
-                )
-                res = pipeline.ingest(cr, file_id)
-                counts[file_id] = res.chunk_count
-                metadata_count += 1
-                print(f"  → metadata [empty extraction]{eta}")
-                continue
-
-            res = pipeline.ingest(cr, file_id)
-            counts[file_id] = res.chunk_count
-            print(f"  → {res.chunk_count} chunks [{cr.engine_used}]{eta}")
+            if result.skipped:
+                cached_count += 1
+                print(f"  → cached{eta}")
+            elif result.depth != "deep":
+                preview_count += 1
+                print(f"  → {result.depth} [{result.engine}]{eta}")
+            elif result.errors:
+                print(f"  → {result.chunk_count} chunks [{result.engine}] (warnings){eta}")
+            else:
+                print(f"  → {result.chunk_count} chunks [{result.engine}]{eta}")
 
         except Exception as exc:
-            # Even on errors — index with metadata so we know it exists
             short_err = str(exc)[:60]
-            try:
-                meta_text = _file_metadata_description(fpath)
-                cr = ContentResult(
-                    filename=fpath.name, file_name=fpath.name,
-                    mime_type="application/octet-stream",
-                    category="unknown",
-                    content=meta_text, text=meta_text,
-                    engine_used="metadata", fallback_used=False, errors=[],
-                )
-                res = pipeline.ingest(cr, file_id)
-                counts[file_id] = res.chunk_count
-                metadata_count += 1
-                print(f"  → metadata [error: {short_err}]{eta}")
-            except Exception:
-                print(f"  → FAILED: {short_err}{eta}")
-                errors_list.append(f"{display}: {short_err}")
+            print(f"  → FAILED: {short_err}{eta}")
+            error_count += 1
+            counts[file_id] = 0
 
     elapsed = time.time() - start
     total_indexed = sum(1 for c in counts.values() if c > 0)
+    deep_count = total_indexed - preview_count
     print(f"\n  Ingestion complete in {elapsed:.1f}s")
-    print(f"  {total_indexed} files indexed, {metadata_count} via metadata-only")
-    if errors_list:
-        print(f"  {len(errors_list)} file(s) completely failed")
+    print(f"  {total_indexed} files indexed: {deep_count} deep, {preview_count} card/preview, {cached_count} cached")
+    if error_count:
+        print(f"  {error_count} file(s) failed")
+
+    # Print coverage report
+    print(f"\n  {pipeline.scan_summary()}")
 
     return counts, id_to_name
 
@@ -817,7 +754,7 @@ def run_interactive(
                 break
 
             print("  thinking...\n")
-            result = pipeline.ask(query, k=8)
+            result = asyncio.run(pipeline.ask(query, k=8))
 
             # ── AI Answer ─────────────────────────────────────────────
             width = min(shutil.get_terminal_size().columns - 6, 78)

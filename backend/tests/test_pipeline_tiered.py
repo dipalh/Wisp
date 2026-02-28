@@ -26,6 +26,7 @@ Exit code 0 = all tests passed, 1 = failures.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import os
 import random
@@ -556,6 +557,11 @@ def run_tier1() -> None:
         MAX_CHUNKS_PER_FILE,
         _downsample_chunks,
         _build_rag_prompt,
+        classify_file,
+        MEDIA_EXTENSIONS,
+        TEXT_LIKE_EXTENSIONS,
+        OFFICE_EXTENSIONS,
+        ARCHIVE_EXTENSIONS,
     )
     from services.embedding.store import SearchHit
     from tests.test_embed_pipeline import _file_metadata_description
@@ -575,7 +581,7 @@ def run_tier1() -> None:
     big = [Chunk(f"f:c{i}", "f", i, f"text {i}") for i in range(200)]
     result = _downsample_chunks(big)
     _check(
-        "T1.2: 200 chunks → 50",
+        f"T1.2: 200 chunks → {MAX_CHUNKS_PER_FILE}",
         len(result) == MAX_CHUNKS_PER_FILE,
         f"input=200, output={len(result)}",
     )
@@ -736,6 +742,20 @@ def run_tier1() -> None:
         f"unique files in top 6: {unique_files}",
     )
 
+    # ── T1.12  File classification ────────────────────────────────────────────
+    print("\n  ── T1.12: classify_file() policy ──")
+    _check("T1.12a: .py → full",             classify_file(".py", 5000) == "full")
+    _check("T1.12b: .txt → full",            classify_file(".txt", 100000) == "full")
+    _check("T1.12c: .pdf ≤80p → full",       classify_file(".pdf", 1000000, pdf_pages=50) == "full")
+    _check("T1.12d: .pdf >80p → ai_preview", classify_file(".pdf", 5000000, pdf_pages=200) == "ai_preview")
+    _check("T1.12e: .png → ai_preview",      classify_file(".png", 500000) == "ai_preview")
+    _check("T1.12f: .mp4 → card_only",       classify_file(".mp4", 50000000) == "card_only")
+    _check("T1.12g: .docx → full",           classify_file(".docx", 200000) == "full")
+    _check("T1.12h: .zip → card_only",       classify_file(".zip", 1000000) == "card_only")
+    _check("T1.12i: .exe → card_only",       classify_file(".exe", 500000) == "card_only")
+    _check("T1.12j: unknown .xyz → card_only", classify_file(".xyz", 1000) == "card_only")
+    _check("T1.12k: .png 25MB → card_only",  classify_file(".png", 25_000_000) == "card_only")
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  TIER 2 — KNOWN-CONTENT INTEGRATION  (needs GEMINI_API_KEY)
@@ -852,7 +872,7 @@ def run_tier2() -> None:
         for gt_id, gt in GROUND_TRUTH.items():
             for query, expected_keywords in gt.get("answer_keywords", {}).items():
                 rag_total += 1
-                result = pipeline.ask(query, k=10)
+                result = asyncio.run(pipeline.ask(query, k=10))
                 answer_lower = result.answer.lower()
                 found_kws = [kw for kw in expected_keywords if kw.lower() in answer_lower]
                 missing_kws = [kw for kw in expected_keywords if kw.lower() not in answer_lower]
@@ -871,7 +891,7 @@ def run_tier2() -> None:
 
         # ── T2.5: Inventory query — "what files do I have" ──────────────
         print("\n  ── T2.5: Inventory query ──")
-        inv_result = pipeline.ask("What files do I have? Give me an overview.")
+        inv_result = asyncio.run(pipeline.ask("What files do I have? Give me an overview."))
         answer_lower = inv_result.answer.lower()
         # Should mention several file types or specific files
         mentioned_files = sum(
@@ -897,9 +917,9 @@ def run_tier2() -> None:
 
         # ── T2.6: Cross-file synthesis ────────────────────────────────────
         print("\n  ── T2.6: Cross-file synthesis ──")
-        cross_result = pipeline.ask(
+        cross_result = asyncio.run(pipeline.ask(
             "What connections exist between the people mentioned across all my files?"
-        )
+        ))
         # Should touch at least 2 different source files
         cross_files = len(set(h.file_id for h in cross_result.hits))
         _check(
@@ -911,9 +931,9 @@ def run_tier2() -> None:
 
         # ── T2.7: Negative — question about non-existent content ─────────
         print("\n  ── T2.7: Negative query ──")
-        neg_result = pipeline.ask(
+        neg_result = asyncio.run(pipeline.ask(
             "What do my files say about the 2025 Mars colonization program?"
-        )
+        ))
         answer_lower = neg_result.answer.lower()
         # The answer should NOT confidently describe Mars colonization details
         hallucination_signs = ["mars colonization program", "the program involves", "the 2025 mars"]
@@ -1102,7 +1122,7 @@ def run_tier3() -> None:
                 ("What's the most interesting thing in my files?", "T3.3f"),
             ]
             for query, label in test_queries:
-                result = pipeline.ask(query, k=12)
+                result = asyncio.run(pipeline.ask(query, k=12))
                 unique_files = len(set(h.file_id for h in result.hits))
                 _check(
                     f"{label}: '{query}' → ≥2 source files",
@@ -1300,7 +1320,7 @@ def run_tier4() -> None:
 
         query_pass = 0
         for test in battery:
-            result = pipeline.ask(test["query"])
+            result = asyncio.run(pipeline.ask(test["query"]))
             ok = test["check"](result)
             _check(test["label"], ok, test["detail"](result))
             if ok:

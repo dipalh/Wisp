@@ -15,6 +15,7 @@ Table schema ("wisp_chunks")
   file_path    : str
   ext          : str
   text         : str   — the raw chunk text (used as citation)
+  depth        : str   — "card" | "preview" | "deep"
   vector       : list<float32>[EMBED_DIM]  — gemini-embedding-001 vector
 """
 from __future__ import annotations
@@ -49,6 +50,7 @@ _SCHEMA = pa.schema([
     pa.field("file_path",   pa.string()),
     pa.field("ext",         pa.string()),
     pa.field("text",        pa.string()),
+    pa.field("depth",       pa.string()),
     pa.field("vector",      pa.list_(pa.float32(), EMBED_DIM)),
 ])
 
@@ -93,7 +95,14 @@ def _get_table() -> lancedb.table.Table:
     if _table is None:
         existing = _db.table_names()
         if TABLE_NAME in existing:
-            _table = _db.open_table(TABLE_NAME)
+            tbl = _db.open_table(TABLE_NAME)
+            # Auto-migrate: drop table if schema is outdated
+            col_names = [f.name for f in tbl.schema]
+            if "depth" not in col_names:
+                _db.drop_table(TABLE_NAME)
+                _table = _db.create_table(TABLE_NAME, schema=_SCHEMA)
+            else:
+                _table = tbl
         else:
             _table = _db.create_table(TABLE_NAME, schema=_SCHEMA)
     return _table
@@ -111,6 +120,7 @@ class SearchHit:
     ext: str
     text: str          # chunk text returned as context / citation
     score: float       # cosine similarity [0, 1]; higher = more similar
+    depth: str = "deep"  # "card" | "preview" | "deep"
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -122,6 +132,7 @@ def upsert_chunks(
     embeddings: list[list[float]],
     file_path: str = "",
     ext: str = "",
+    depth: str = "deep",
 ) -> int:
     """
     Upsert pre-embedded chunks into LanceDB.
@@ -151,6 +162,7 @@ def upsert_chunks(
             "file_path":   file_path,
             "ext":         ext,
             "text":        c.text,
+            "depth":       depth,
             "vector":      [float(v) for v in emb],
         }
         for c, emb in zip(chunks, embeddings)
@@ -216,6 +228,7 @@ def query(
                 ext=str(row["ext"]),
                 text=str(row["text"]),
                 score=similarity,
+                depth=str(row.get("depth", "deep")),
             )
         )
 
