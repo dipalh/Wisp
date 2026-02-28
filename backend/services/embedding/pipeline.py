@@ -130,9 +130,15 @@ def ingest(
     chunks = _downsample_chunks(chunks)
 
     # ── 1c. Prepend a file "index card" so inventory queries work ─────────
+    # Include a content preview so semantic search can match files by theme,
+    # not just by filename.  E.g. searching "resumes" will match a card that
+    # says 'Content preview: Sarah Johnson, Senior Data Scientist …'
+    _preview_raw = result.content or ""
+    _preview = _preview_raw[:300].replace("\n", " ").strip()
     card_text = (
-        f"[FILE INDEX] name={file_path}  type={ext}  "
-        f"engine={result.engine_used}  chunks={len(chunks)}"
+        f"[FILE INDEX] This is \"{file_path}\", a {ext} file "
+        f"processed by {result.engine_used} ({len(chunks)} content chunks).\n"
+        f"Content preview: {_preview}"
     )
     card = Chunk(
         chunk_id=f"{file_id}:card",
@@ -192,7 +198,7 @@ def search(
     query: str,
     k: int = 5,
     where: dict | None = None,
-    max_per_file: int = 2,
+    max_per_file: int = 3,
 ) -> list[SearchHit]:
     """
     Semantic search over indexed files, with diversity.
@@ -262,7 +268,7 @@ def _build_rag_prompt(query: str, hits: list[SearchHit]) -> str:
 
 def ask(
     query: str,
-    k: int = 10,
+    k: int = 15,
     where: dict | None = None,
 ) -> AskResult:
     """
