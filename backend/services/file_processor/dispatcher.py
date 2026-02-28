@@ -137,6 +137,10 @@ ALL_MIME_TYPES: dict[str, str] = {
     **EXECUTABLE_MIME_TYPES,
 }
 
+# Gemini-bound binary files larger than this use filename inference instead of extraction.
+# Text/code files are exempt — local decoding is fast regardless of size.
+FILENAME_INFER_SIZE_BYTES = 8 * 1024 * 1024  # 8 MB
+
 VIDEO_EXTENSIONS = {".mp4", ".mpeg", ".mpg", ".mov", ".avi", ".flv", ".webm", ".wmv", ".3gp"}
 TEXT_LIKE_EXTENSIONS = {
     ".txt", ".md", ".html", ".htm", ".css", ".csv", ".xml", ".json",
@@ -229,6 +233,14 @@ async def extract(file_bytes: bytes, filename: str) -> ContentResult:
     if ext in GEMINI_MIME_TYPES:
         mime_type = GEMINI_MIME_TYPES[ext]
         force_files_api = ext in VIDEO_EXTENSIONS
+
+        # Large non-text Gemini files → derive meaning from filename (fast, no upload)
+        if len(file_bytes) > FILENAME_INFER_SIZE_BYTES and ext not in TEXT_LIKE_EXTENSIONS:
+            from ai.generate import infer_from_filename
+            content = await infer_from_filename(filename)
+            return _build_result(filename, mime_type, content,
+                                 engine_used="filename-infer", ext=ext)
+
         try:
             content = await gemini.extract(file_bytes, mime_type, ext, force_files_api=force_files_api)
             return _build_result(filename, mime_type, content, engine_used="gemini", ext=ext)
@@ -242,7 +254,7 @@ async def extract(file_bytes: bytes, filename: str) -> ContentResult:
                 fallback_used=True,
             )
 
-    # ── Unknown / unsupported — try reading as text, else return stub ─────
+    # ── Unknown / unsupported — try reading as text, else infer from filename ─
     try:
         content = file_bytes.decode("utf-8")
         if content.strip():
@@ -250,10 +262,7 @@ async def extract(file_bytes: bytes, filename: str) -> ContentResult:
     except (UnicodeDecodeError, ValueError):
         pass
 
-    return _build_result(
-        filename,
-        "application/octet-stream",
-        f"[Binary file: {filename}]",
-        engine_used="stub",
-        ext=ext,
-    )
+    from ai.generate import infer_from_filename
+    content = await infer_from_filename(filename)
+    return _build_result(filename, "application/octet-stream", content,
+                         engine_used="filename-infer", ext=ext)

@@ -1,10 +1,14 @@
 import asyncio
 import os
 import tempfile
+from typing import Type, TypeVar
 
 from google.genai import types
+from pydantic import BaseModel
 
 from ai.client import MODEL_NAME, get_client
+
+T = TypeVar("T", bound=BaseModel)
 
 INLINE_SIZE_LIMIT = 15 * 1024 * 1024  # 15 MB
 
@@ -73,3 +77,54 @@ def _via_files_api(client, file_bytes: bytes, mime_type: str, ext: str, prompt: 
             os.unlink(tmp_path)
         if uploaded:
             client.files.delete(name=uploaded.name)
+
+
+async def infer_from_filename(filename: str) -> str:
+    """Infer semantic meaning of a file from its filename alone.
+
+    Used when content extraction is impractical (file too large, unsupported
+    type, or binary blob). Accurate enough for directory organisation and search
+    indexing — especially for descriptively-named academic and work files.
+    """
+    return await generate_text(
+        f"Given only the filename '{filename}', write a concise 1-2 sentence "
+        f"description of what this file most likely contains and its purpose. "
+        f"Be specific: mention the subject, document type, and likely contents. "
+        f"Do not hedge — commit to the most probable interpretation."
+    )
+
+
+async def generate_structured(
+    prompt: str,
+    schema: Type[T],
+    system: str | None = None,
+) -> T:
+    """Call Gemini in JSON mode and return a validated Pydantic instance.
+
+    Uses Gemini's structured output feature (response_schema) to guarantee the
+    response conforms to the provided Pydantic model.
+
+    Args:
+        prompt: The user-role prompt to send.
+        schema: A Pydantic BaseModel subclass describing the desired output shape.
+        system: Optional system instruction.
+
+    Returns:
+        A validated instance of ``schema``.
+    """
+    client = get_client()
+    config = types.GenerateContentConfig(
+        response_mime_type="application/json",
+        response_schema=schema,
+        system_instruction=system,
+    )
+    response = await asyncio.to_thread(
+        client.models.generate_content,
+        model=MODEL_NAME,
+        contents=prompt,
+        config=config,
+    )
+    # SDK populates response.parsed when response_schema is a Pydantic model
+    if hasattr(response, "parsed") and response.parsed is not None:
+        return response.parsed
+    return schema.model_validate_json(response.text)
