@@ -11,6 +11,8 @@ GEMINI_MIME_TYPES: dict[str, str] = {
     ".heic": "image/heic",
     ".heif": "image/heif",
     ".svg":  "image/svg+xml",
+    ".gif":  "image/gif",
+    ".ico":  "image/x-icon",
     # Video
     ".mp4":  "video/mp4",
     ".mpeg": "video/mpeg",
@@ -70,6 +72,17 @@ GEMINI_MIME_TYPES: dict[str, str] = {
     ".kt":   "text/plain",
     ".sh":   "text/plain",
     ".bash": "text/plain",
+    ".tex":  "text/plain",
+    ".sol":  "text/plain",
+    ".wl":   "text/plain",
+    ".mermaid": "text/plain",
+    ".r":    "text/plain",
+    ".lua":  "text/plain",
+    ".pl":   "text/plain",
+    ".zig":  "text/plain",
+    ".h":    "text/plain",
+    ".hpp":  "text/plain",
+    ".m":    "text/plain",
     # Windows scripts
     ".bat":  "text/plain",
     ".cmd":  "text/plain",
@@ -131,6 +144,8 @@ TEXT_LIKE_EXTENSIONS = {
     ".reg", ".nfo", ".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".c",
     ".cpp", ".go", ".rs", ".rb", ".php", ".swift", ".kt", ".sh", ".bash",
     ".bat", ".cmd", ".ps1", ".psm1", ".psd1", ".vbs", ".eml", ".ics", ".vcf",
+    ".tex", ".sol", ".wl", ".mermaid", ".r", ".lua", ".pl", ".zig",
+    ".h", ".hpp", ".m",
 }
 
 
@@ -147,7 +162,7 @@ def _category_for_ext(ext: str) -> str:
         return "text"
     if ext in VIDEO_EXTENSIONS or ext in {".wav", ".mp3", ".aiff", ".aac", ".ogg", ".flac", ".m4a", ".opus"}:
         return "media"
-    if ext in {".png", ".jpg", ".jpeg", ".webp", ".heic", ".heif", ".svg"}:
+    if ext in {".png", ".jpg", ".jpeg", ".webp", ".heic", ".heif", ".svg", ".gif", ".ico"}:
         return "image"
     return "document"
 
@@ -183,14 +198,16 @@ async def extract(file_bytes: bytes, filename: str) -> ContentResult:
     from pathlib import Path
     ext = Path(filename).suffix.lower()
 
-    if ext == ".txt":
+    # ── Plain text & code — read locally, no API call needed ──────────────
+    if ext in TEXT_LIKE_EXTENSIONS:
         try:
             content = _extract_txt(file_bytes)
-            return _build_result(filename, GEMINI_MIME_TYPES[ext], content, engine_used="local", ext=ext)
+            mime = GEMINI_MIME_TYPES.get(ext, "text/plain")
+            return _build_result(filename, mime, content, engine_used="local", ext=ext)
         except Exception:
             return _build_result(
                 filename,
-                GEMINI_MIME_TYPES[ext],
+                GEMINI_MIME_TYPES.get(ext, "text/plain"),
                 _fake_gemini_content(file_bytes, ext, filename),
                 engine_used="fake",
                 ext=ext,
@@ -225,7 +242,18 @@ async def extract(file_bytes: bytes, filename: str) -> ContentResult:
                 fallback_used=True,
             )
 
-    raise ValueError(
-        f"Unsupported file type '{ext}'. "
-        f"Supported: {', '.join(sorted(ALL_MIME_TYPES))}"
+    # ── Unknown / unsupported — try reading as text, else return stub ─────
+    try:
+        content = file_bytes.decode("utf-8")
+        if content.strip():
+            return _build_result(filename, "text/plain", content, engine_used="local-guess", ext=ext)
+    except (UnicodeDecodeError, ValueError):
+        pass
+
+    return _build_result(
+        filename,
+        "application/octet-stream",
+        f"[Binary file: {filename}]",
+        engine_used="stub",
+        ext=ext,
     )

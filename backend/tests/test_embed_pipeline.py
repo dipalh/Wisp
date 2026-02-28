@@ -7,11 +7,21 @@ Run from the ``backend/`` directory:
   Automated (14 tests, exit 0 / 1):
     python -m tests.test_embed_pipeline
 
-  Interactive (ingest 3 docs, then you type queries and see RAG answers):
-    python -m tests.test_embed_pipeline --interactive
+  Interactive — point Wisp at a real directory and ask questions:
+    python -m tests.test_embed_pipeline -i --dir ~/Documents/MyProject
 
-  Interactive with your own files:
-    python -m tests.test_embed_pipeline --interactive --files path/to/a.txt path/to/b.md
+  Interactive — specific files (any type: images, PDFs, code, etc.):
+    python -m tests.test_embed_pipeline -i --files report.pdf photo.png code.py
+
+  Interactive — built-in demo docs (no args):
+    python -m tests.test_embed_pipeline -i
+
+All file types supported by the file processor are handled: images, video,
+audio, PDFs, Office docs, code, archives, and plain text.  Files are
+extracted via the dispatcher (Gemini vision for images/video/audio,
+local parsers for Office/text), chunked, embedded, and stored in a temp
+LanceDB index.  Then you ask natural-language questions and get AI answers
+grounded in the actual file contents.
 
 Structure
 ---------
@@ -26,9 +36,6 @@ Every test prints:
     EXPECTED  — what we expect to see
     ACTUAL    — what the system returned
     [PASS] / [FAIL]
-
-The interactive mode lets you TYPE a question and SEE an AI-generated answer
-grounded in the indexed content, plus the raw retrieval chunks for transparency.
 """
 from __future__ import annotations
 
@@ -351,41 +358,414 @@ def _print_hits(query: str, expected_top: str, hits) -> None:
 # Interactive mode
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# ── File size thresholds ──────────────────────────────────────────────────────
+MAX_GEMINI_FILE_SIZE_MB = 20     # Gemini API upload limit for media
 
-def _ingest_user_files(file_paths: list[str]) -> dict[str, int]:
-    """Read plain-text files from disk and ingest them into the pipeline."""
-    import hashlib
-    from services.embedding import pipeline
-    from services.file_processor.models import ContentResult
+# ── Directories to always skip (structural noise, not user files) ─────────────
+_SKIP_DIR_NAMES = {
+    "__pycache__", "node_modules", ".git", ".venv", "venv", ".tox",
+    "dist", "build", ".eggs", ".mypy_cache", ".idea", ".vscode",
+}
 
-    counts: dict[str, int] = {}
+
+def _should_skip_dir(name: str) -> bool:
+    """Return True for directories that are filesystem noise, not user content."""
+    lower = name.lower()
+    if lower.startswith(".") and lower not in {".app"}:
+        return True
+    if lower in _SKIP_DIR_NAMES:
+        return True
+    # Saved-webpage companion dirs (e.g. "Checkout _ eBay_files") — assets, not content
+    if lower.endswith("_files"):
+        return True
+    # macOS localization dirs — hundreds of .strings files, no user content
+    if lower.endswith(".lproj"):
+        return True
+    return False
+
+
+def _file_metadata_description(path: _Path) -> str:
+    """Build a rich metadata string for a file we can't fully extract.
+
+    This ensures the system *knows* about every file — name, type, size,
+    location — even if it can't read the contents.
+    """
+    name = path.name
+    ext = path.suffix.lower() or "(no extension)"
+    try:
+        stat = path.stat()
+        size = stat.st_size
+        if size < 1024:
+            size_str = f"{size} bytes"
+        elif size < 1024 * 1024:
+            size_str = f"{size / 1024:.1f} KB"
+        elif size < 1024 * 1024 * 1024:
+            size_str = f"{size / (1024 * 1024):.1f} MB"
+        else:
+            size_str = f"{size / (1024 * 1024 * 1024):.2f} GB"
+    except OSError:
+        size_str = "unknown size"
+
+    # Human-readable type descriptions
+    type_map = {
+        ".dmg": "macOS disk image (installer)",
+        ".iso": "disk image (ISO)",
+        ".img": "disk image",
+        ".torrent": "BitTorrent download file",
+        ".exe": "Windows executable",
+        ".msi": "Windows installer package",
+        ".dll": "Windows dynamic library",
+        ".app": "macOS application bundle",
+        ".pkg": "macOS installer package",
+        ".deb": "Linux Debian package",
+        ".rpm": "Linux RPM package",
+        ".woff": "web font (WOFF)",
+        ".woff2": "web font (WOFF2)",
+        ".ttf": "TrueType font",
+        ".eot": "Embedded OpenType font",
+        ".otf": "OpenType font",
+        ".ico": "icon file",
+        ".icns": "macOS icon file",
+        ".save": "game save file",
+        ".pkpass": "Apple Wallet pass",
+        ".pbids": "Power BI data source",
+        ".plist": "macOS property list (config)",
+        ".strings": "macOS localization strings",
+        ".nib": "macOS Interface Builder file",
+        ".storyboardc": "compiled storyboard (iOS/macOS)",
+        ".vmdk": "virtual machine disk (VMware)",
+        ".vdi": "virtual machine disk (VirtualBox)",
+        ".pyc": "compiled Python bytecode",
+        ".pyo": "optimized Python bytecode",
+        ".class": "compiled Java class",
+        ".o": "compiled object file",
+        ".obj": "compiled object file",
+        ".lock": "dependency lock file",
+        ".bin": "binary data file",
+        ".dat": "data file",
+        ".ds_store": "macOS Finder metadata",
+        ".backup": "backup file",
+        ".bak": "backup file",
+        ".tmp": "temporary file",
+        ".crdownload": "incomplete Chrome download",
+        ".part": "incomplete download",
+        ".zip": "ZIP archive",
+        ".tar": "TAR archive",
+        ".gz": "gzip compressed file",
+        ".tgz": "compressed TAR archive",
+        ".rar": "RAR archive",
+        ".7z": "7-Zip archive",
+        ".bz2": "bzip2 compressed file",
+        ".xz": "XZ compressed file",
+    }
+
+    type_desc = type_map.get(ext, f"file (type: {ext})")
+
+    return (
+        f"File: {name}\n"
+        f"Type: {type_desc}\n"
+        f"Extension: {ext}\n"
+        f"Size: {size_str}\n"
+        f"This is a {type_desc} named \"{name}\" ({size_str}). "
+        f"The file contents cannot be fully extracted but the file exists "
+        f"in the user's file system."
+    )
+
+
+def _collect_files_from_dir(
+    dir_path: str,
+    max_files: int = 2000,
+    recursive: bool = True,
+) -> list[_Path]:
+    """Collect ALL files from a directory.
+
+    Only skips structural directories (.git, node_modules, _files/, .lproj)
+    that are filesystem noise. Every actual file is returned.
+    """
+    root = _Path(dir_path).resolve()
+    if not root.is_dir():
+        print(f"  ERROR: {root} is not a directory")
+        return []
+
+    files: list[_Path] = []
+    skipped_dirs: list[str] = []
+
+    def _walk(directory: _Path, depth: int = 0) -> None:
+        if len(files) >= max_files:
+            return
+        try:
+            entries = sorted(directory.iterdir())
+        except PermissionError:
+            return
+
+        for item in entries:
+            if len(files) >= max_files:
+                return
+
+            if item.is_dir():
+                if _should_skip_dir(item.name):
+                    skipped_dirs.append(item.name)
+                    continue
+                # .app bundles — index the .app itself as a single entry
+                if item.name.lower().endswith(".app"):
+                    # Create a placeholder path for the app bundle
+                    files.append(item)
+                    continue
+                if recursive:
+                    _walk(item, depth + 1)
+                continue
+
+            if not item.is_file():
+                continue
+
+            # Hidden files — still index, but skip .DS_Store specifically
+            if item.name == ".DS_Store":
+                continue
+
+            files.append(item)
+
+    _walk(root)
+
+    if skipped_dirs:
+        from collections import Counter
+        dir_counts = Counter(skipped_dirs)
+        print(f"  (Skipped {len(skipped_dirs)} structural directories: "
+              + ", ".join(f"{n}" for n, _ in dir_counts.most_common(5))
+              + ("..." if len(dir_counts) > 5 else "") + ")")
+
+    return files
+
+
+def _resolve_file_list(file_paths: list[str]) -> list[_Path]:
+    """Resolve explicit --files paths."""
+    result: list[_Path] = []
     for path in file_paths:
         p = _Path(path).resolve()
         if not p.is_file():
             print(f"    ⚠ skipping (not a file): {p}")
             continue
-        text = p.read_text(errors="replace")
-        file_id = hashlib.sha256(str(p).encode()).hexdigest()[:16]
-        cr = ContentResult(
-            filename=p.name,
-            file_name=p.name,
-            mime_type=p.suffix,
-            category="text",
-            content=text,
-            text=text,
-            engine_used="user-file",
-            fallback_used=False,
-            errors=[],
-        )
-        res = pipeline.ingest(cr, file_id)
-        counts[file_id] = res.chunk_count
-        print(f"    {p.name:30s}  →  {res.chunk_count} chunks")
-    return counts
+        result.append(p)
+    return result
 
 
-def run_interactive(user_files: list[str] | None = None) -> None:
+def _categorize_ext(ext: str) -> str:
+    """Map extension to a display category."""
+    if ext in {".pdf"}:
+        return "PDFs"
+    if ext in {".png", ".jpg", ".jpeg", ".webp", ".heic", ".heif", ".gif", ".svg", ".ico", ".icns"}:
+        return "Images"
+    if ext in {".mp4", ".mov", ".avi", ".webm", ".mkv", ".flv", ".wmv", ".3gp", ".mpeg", ".mpg"}:
+        return "Videos"
+    if ext in {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".opus", ".aiff"}:
+        return "Audio"
+    if ext in {".docx", ".pptx", ".xlsx", ".doc", ".ppt", ".xls"}:
+        return "Office"
+    if ext in {".html", ".htm"}:
+        return "HTML"
+    if ext in {".csv", ".json", ".xml", ".yaml", ".yml", ".toml"}:
+        return "Data"
+    if ext in {".zip", ".tar", ".gz", ".tgz", ".rar", ".7z", ".bz2", ".xz"}:
+        return "Archives"
+    if ext in {".dmg", ".iso", ".img", ".pkg", ".deb", ".rpm", ".msi", ".exe", ".dll", ".app"}:
+        return "Installers/Apps"
+    if ext in {".torrent", ".save", ".pkpass", ".pbids", ".plist", ".strings", ".nib", ".storyboardc"}:
+        return "System/Meta"
+    if ext in {".woff", ".woff2", ".ttf", ".eot", ".otf"}:
+        return "Fonts"
+    if ext in {".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".c", ".cpp", ".go", ".rs", ".rb",
+               ".php", ".swift", ".kt", ".sh", ".bash", ".h", ".hpp", ".m", ".r", ".lua", ".pl",
+               ".zig", ".sol", ".tex", ".sql"}:
+        return "Code"
+    if ext in {".txt", ".md", ".log", ".cfg", ".conf", ".ini"}:
+        return "Text"
+    return "Other"
+
+
+def _print_scan_summary(files: list[_Path], root: _Path) -> None:
+    """Show what we found — every file counts."""
+    from collections import Counter
+
+    cats: Counter[str] = Counter()
+    for f in files:
+        ext = f.suffix.lower() if f.is_file() else ".app"
+        cats[_categorize_ext(ext)] += 1
+
+    total_size = 0
+    for f in files:
+        try:
+            total_size += f.stat().st_size if f.is_file() else 0
+        except OSError:
+            pass
+
+    if total_size < 1024 * 1024:
+        size_str = f"{total_size / 1024:.0f} KB"
+    elif total_size < 1024 * 1024 * 1024:
+        size_str = f"{total_size / (1024 * 1024):.0f} MB"
+    else:
+        size_str = f"{total_size / (1024 * 1024 * 1024):.1f} GB"
+
+    print(f"\n  {len(files)} files to index ({size_str}):")
+    category_order = [
+        "PDFs", "Images", "Office", "HTML", "Code", "Text", "Data",
+        "Videos", "Audio", "Archives", "Installers/Apps", "Fonts",
+        "System/Meta", "Other",
+    ]
+    for cat in category_order:
+        if cat in cats:
+            print(f"    {cat:18s}  {cats[cat]:>4}")
+
+
+def _ingest_real_files(
+    files: list[_Path],
+    root: _Path | None = None,
+) -> tuple[dict[str, int], dict[str, str]]:
+    """Extract and ingest ALL files via the dispatcher.
+
+    Files that can't be fully extracted still get indexed with rich metadata
+    (name, type, size, extension) so the system knows they exist.
+
+    Returns (counts, id_to_name).
+    """
+    import asyncio as _aio
+    import hashlib
+    import time
+    from services.embedding import pipeline
+    from services.file_processor.dispatcher import extract as dispatch_extract
+    from services.file_processor.models import ContentResult
+
+    counts: dict[str, int] = {}
+    id_to_name: dict[str, str] = {}
+    errors_list: list[str] = []
+    metadata_count = 0
+    total = len(files)
+    start = time.time()
+
+    for idx, fpath in enumerate(files, 1):
+        rel = fpath.relative_to(root) if root and fpath.is_relative_to(root) else fpath.name
+        display = str(rel)
+        file_id = hashlib.sha256(str(fpath).encode()).hexdigest()[:16]
+        id_to_name[file_id] = display
+
+        # Progress with ETA
+        elapsed = time.time() - start
+        if idx > 5 and elapsed > 0:
+            rate = idx / elapsed
+            remaining = (total - idx) / rate
+            eta = f"  ~{remaining:.0f}s left" if remaining > 5 else ""
+        else:
+            eta = ""
+
+        short_name = display[:55] if len(display) <= 55 else "..." + display[-52:]
+        print(f"    [{idx:>4}/{total}] {short_name}", end="", flush=True)
+
+        try:
+            # ── .app bundles (directories) — metadata only ────────────
+            if fpath.is_dir():
+                meta_text = _file_metadata_description(fpath)
+                cr = ContentResult(
+                    filename=fpath.name, file_name=fpath.name,
+                    mime_type="application/x-apple-app",
+                    category="application",
+                    content=meta_text, text=meta_text,
+                    engine_used="metadata", fallback_used=False, errors=[],
+                )
+                res = pipeline.ingest(cr, file_id)
+                counts[file_id] = res.chunk_count
+                metadata_count += 1
+                print(f"  → metadata [app bundle]{eta}")
+                continue
+
+            # ── Size check for Gemini-bound media ─────────────────────
+            try:
+                size_mb = fpath.stat().st_size / (1024 * 1024)
+            except OSError:
+                size_mb = 0
+
+            ext = fpath.suffix.lower()
+
+            # Files too large for Gemini API — index with metadata
+            from services.file_processor.dispatcher import (
+                GEMINI_MIME_TYPES, TEXT_LIKE_EXTENSIONS,
+                OFFICE_MIME_TYPES, ARCHIVE_MIME_TYPES,
+            )
+            needs_gemini = (ext in GEMINI_MIME_TYPES and ext not in TEXT_LIKE_EXTENSIONS
+                           and ext not in OFFICE_MIME_TYPES and ext not in ARCHIVE_MIME_TYPES)
+
+            if needs_gemini and size_mb > MAX_GEMINI_FILE_SIZE_MB:
+                meta_text = _file_metadata_description(fpath)
+                cr = ContentResult(
+                    filename=fpath.name, file_name=fpath.name,
+                    mime_type=GEMINI_MIME_TYPES.get(ext, "application/octet-stream"),
+                    category="media",
+                    content=meta_text, text=meta_text,
+                    engine_used="metadata", fallback_used=False, errors=[],
+                )
+                res = pipeline.ingest(cr, file_id)
+                counts[file_id] = res.chunk_count
+                metadata_count += 1
+                print(f"  → metadata [{size_mb:.0f}MB, too large for API]{eta}")
+                continue
+
+            # ── Normal extraction ─────────────────────────────────────
+            file_bytes = fpath.read_bytes()
+            cr = _aio.run(dispatch_extract(file_bytes, fpath.name))
+
+            if not cr.content or not cr.content.strip():
+                # Extraction returned empty — use metadata instead
+                meta_text = _file_metadata_description(fpath)
+                cr = ContentResult(
+                    filename=fpath.name, file_name=fpath.name,
+                    mime_type=cr.mime_type or "application/octet-stream",
+                    category=cr.category or "unknown",
+                    content=meta_text, text=meta_text,
+                    engine_used="metadata", fallback_used=False, errors=[],
+                )
+                res = pipeline.ingest(cr, file_id)
+                counts[file_id] = res.chunk_count
+                metadata_count += 1
+                print(f"  → metadata [empty extraction]{eta}")
+                continue
+
+            res = pipeline.ingest(cr, file_id)
+            counts[file_id] = res.chunk_count
+            print(f"  → {res.chunk_count} chunks [{cr.engine_used}]{eta}")
+
+        except Exception as exc:
+            # Even on errors — index with metadata so we know it exists
+            short_err = str(exc)[:60]
+            try:
+                meta_text = _file_metadata_description(fpath)
+                cr = ContentResult(
+                    filename=fpath.name, file_name=fpath.name,
+                    mime_type="application/octet-stream",
+                    category="unknown",
+                    content=meta_text, text=meta_text,
+                    engine_used="metadata", fallback_used=False, errors=[],
+                )
+                res = pipeline.ingest(cr, file_id)
+                counts[file_id] = res.chunk_count
+                metadata_count += 1
+                print(f"  → metadata [error: {short_err}]{eta}")
+            except Exception:
+                print(f"  → FAILED: {short_err}{eta}")
+                errors_list.append(f"{display}: {short_err}")
+
+    elapsed = time.time() - start
+    total_indexed = sum(1 for c in counts.values() if c > 0)
+    print(f"\n  Ingestion complete in {elapsed:.1f}s")
+    print(f"  {total_indexed} files indexed, {metadata_count} via metadata-only")
+    if errors_list:
+        print(f"  {len(errors_list)} file(s) completely failed")
+
+    return counts, id_to_name
+
+
+def run_interactive(
+    user_files: list[str] | None = None,
+    user_dir: str | None = None,
+) -> None:
     print("\n" + "=" * 64)
-    print("INTERACTIVE MODE — ask questions, get AI answers")
+    print("WISP — Interactive File Memory")
     print("=" * 64)
 
     if not _require_api_key():
@@ -394,60 +774,77 @@ def run_interactive(user_files: list[str] | None = None) -> None:
     from services.embedding import pipeline, store
 
     tmp = _create_temp_store()
+    id_to_name: dict[str, str] = {}
+
     try:
-        if user_files:
-            print(f"\n  Ingesting {len(user_files)} user-provided file(s)...")
-            counts = _ingest_user_files(user_files)
+        # ── Determine what to ingest ──────────────────────────────────
+        if user_dir:
+            root = _Path(user_dir).resolve()
+            print(f"\n  Scanning {root} ...")
+            files = _collect_files_from_dir(user_dir)
+            if not files:
+                print("  No files found.")
+                return
+            _print_scan_summary(files, root)
+            print(f"\n  Ingesting ALL files...\n")
+            counts, id_to_name = _ingest_real_files(files, root=root)
+        elif user_files:
+            files = _resolve_file_list(user_files)
+            if not files:
+                print("  No valid files to ingest.")
+                return
+            print(f"\n  Ingesting {len(files)} file(s)...\n")
+            counts, id_to_name = _ingest_real_files(files)
         else:
-            print("\n  Ingesting 3 test documents...")
+            print("\n  Ingesting 3 built-in demo documents...")
             counts = _ingest_test_docs()
+            id_to_name = {fid: doc["filename"] for fid, doc in DOCS.items()}
 
-        total = store.collection_count()
-        print(f"\n  Ready.  {total} chunks across {len(counts)} files.\n")
+        total_chunks = store.collection_count()
+        indexed = sum(1 for c in counts.values() if c > 0)
+        print(f"\n  ✓ {indexed} file(s) in memory, {total_chunks} chunks total.")
 
-        if not user_files:
-            print("  Documents available:")
-            print("    • invoice.txt       — Acme Software invoice, $12,636.00")
-            print("    • resume.txt        — Jane Smith, Senior Software Engineer")
-            print("    • meeting_notes.txt — Q3 engineering all-hands")
+        print("\n  Ask anything about these files.  Type 'quit' to exit.\n")
 
-        print()
-        print("  Ask a natural-language question and press Enter.")
-        print("  Type 'quit' or Ctrl-C to exit.\n")
-
+        # ── Query loop ────────────────────────────────────────────────
         while True:
             try:
-                query = input("  question> ").strip()
+                query = input("  wisp> ").strip()
             except (EOFError, KeyboardInterrupt):
                 print()
                 break
             if not query or query.lower() in ("quit", "exit", "q"):
                 break
 
-            result = pipeline.ask(query, k=5)
+            print("  thinking...\n")
+            result = pipeline.ask(query, k=8)
 
-            # ── AI Answer ─────────────────────────────────────────────────
-            print()
-            print("  ┌─ ANSWER ─────────────────────────────────────────────┐")
-            for line in textwrap.wrap(result.answer, width=64):
-                print(f"  │ {line}")
-            print("  └─────────────────────────────────────────────────────┘")
+            # ── AI Answer ─────────────────────────────────────────────
+            width = min(shutil.get_terminal_size().columns - 6, 78)
+            border = "─" * (width - 2)
+            print(f"  ┌{border}┐")
+            for line in result.answer.splitlines():
+                for wrapped in textwrap.wrap(line, width=width - 4) or [""]:
+                    pad = " " * (width - 2 - len(wrapped))
+                    print(f"  │ {wrapped}{pad}│")
+            print(f"  └{border}┘")
 
-            # ── Raw retrieved chunks (for transparency / debugging) ───────
+            # ── Sources ───────────────────────────────────────────────
             if result.hits:
-                print()
-                print("  Retrieved chunks (for transparency):")
-                for i, h in enumerate(result.hits):
-                    label = h.file_path or h.file_id
-                    print(f"    [{i+1}] {label}  (score={h.score:.4f})")
-                    snippet = h.text[:120].replace("\n", " ")
-                    print(f"        \"{snippet}...\"")
+                seen: set[str] = set()
+                sources: list[str] = []
+                for h in result.hits:
+                    label = id_to_name.get(h.file_id, h.file_path or h.file_id)
+                    if label not in seen:
+                        seen.add(label)
+                        sources.append(label)
+                print(f"  sources: {', '.join(sources)}")
             print()
 
     finally:
         pipeline.teardown_store()
         shutil.rmtree(tmp, ignore_errors=True)
-        print("  (cleaned up temp LanceDB dir)")
+        print("  (cleaned up temp index)")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -455,12 +852,11 @@ def run_interactive(user_files: list[str] | None = None) -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def _parse_files_arg() -> list[str]:
-    """Extract file paths following --files from sys.argv."""
-    if "--files" not in sys.argv:
+def _parse_path_args(flag: str) -> list[str]:
+    """Extract paths following a flag (--files or --dir) from sys.argv."""
+    if flag not in sys.argv:
         return []
-    idx = sys.argv.index("--files") + 1
-    # Collect everything after --files that isn't another flag
+    idx = sys.argv.index(flag) + 1
     paths: list[str] = []
     while idx < len(sys.argv) and not sys.argv[idx].startswith("-"):
         paths.append(sys.argv[idx])
@@ -476,8 +872,10 @@ def main() -> None:
     print("╚════════════════════════════════════════╝")
 
     if interactive:
-        user_files = _parse_files_arg()
-        run_interactive(user_files=user_files or None)
+        user_files = _parse_path_args("--files")
+        dir_args = _parse_path_args("--dir")
+        user_dir = dir_args[0] if dir_args else None
+        run_interactive(user_files=user_files or None, user_dir=user_dir)
     else:
         run_chunker_tests()
         run_pipeline_tests()
