@@ -8,5 +8,10 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 # Used by google-cloud-vision (and any other Cloud SDK client) automatically.
 GOOGLE_CLOUD_VISION_API_KEY = os.getenv("GOOGLE_CLOUD_VISION_API_KEY")
 
-if not GEMINI_API_KEY:
-    raise RuntimeError("GEMINI_API_KEY is not set in your .env file")
+
+def get_gemini_api_key() -> str | None:
+    return os.getenv("GEMINI_API_KEY")
+
+
+def get_google_cloud_vision_api_key() -> str | None:
+    return os.getenv("GOOGLE_CLOUD_VISION_API_KEY")

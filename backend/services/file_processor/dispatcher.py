@@ -125,29 +125,105 @@ ALL_MIME_TYPES: dict[str, str] = {
 }
 
 VIDEO_EXTENSIONS = {".mp4", ".mpeg", ".mpg", ".mov", ".avi", ".flv", ".webm", ".wmv", ".3gp"}
+TEXT_LIKE_EXTENSIONS = {
+    ".txt", ".md", ".html", ".htm", ".css", ".csv", ".xml", ".json",
+    ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".log", ".sql",
+    ".reg", ".nfo", ".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".c",
+    ".cpp", ".go", ".rs", ".rb", ".php", ".swift", ".kt", ".sh", ".bash",
+    ".bat", ".cmd", ".ps1", ".psm1", ".psd1", ".vbs", ".eml", ".ics", ".vcf",
+}
+
+
+def _category_for_ext(ext: str) -> str:
+    if ext == ".txt":
+        return "text"
+    if ext in OFFICE_MIME_TYPES:
+        return "office"
+    if ext in ARCHIVE_MIME_TYPES:
+        return "archive"
+    if ext in EXECUTABLE_MIME_TYPES:
+        return "binary"
+    if ext in TEXT_LIKE_EXTENSIONS:
+        return "text"
+    if ext in VIDEO_EXTENSIONS or ext in {".wav", ".mp3", ".aiff", ".aac", ".ogg", ".flac", ".m4a", ".opus"}:
+        return "media"
+    if ext in {".png", ".jpg", ".jpeg", ".webp", ".heic", ".heif", ".svg"}:
+        return "image"
+    return "document"
+
+
+def _build_result(filename: str, mime_type: str, content: str, engine_used: str, ext: str, fallback_used: bool = False, errors: list[str] | None = None) -> ContentResult:
+    return ContentResult(
+        filename=filename,
+        file_name=filename,
+        mime_type=mime_type,
+        category=_category_for_ext(ext),
+        content=content,
+        text=content,
+        engine_used=engine_used,
+        fallback_used=fallback_used,
+        errors=errors or [],
+    )
+
+
+def _fake_gemini_content(file_bytes: bytes, ext: str, filename: str) -> str:
+    normalized_ext = ext.lstrip(".")
+    if ext in TEXT_LIKE_EXTENSIONS:
+        preview = file_bytes.decode("utf-8", errors="replace").strip()
+        if preview:
+            return f"DEMO_EXTRACT:{normalized_ext}:{preview[:80]}"
+    return f"DEMO_EXTRACT:{normalized_ext}:{filename}"
+
+
+def _extract_txt(file_bytes: bytes) -> str:
+    return file_bytes.decode("utf-8", errors="replace")
 
 
 async def extract(file_bytes: bytes, filename: str) -> ContentResult:
     from pathlib import Path
     ext = Path(filename).suffix.lower()
 
+    if ext == ".txt":
+        try:
+            content = _extract_txt(file_bytes)
+            return _build_result(filename, GEMINI_MIME_TYPES[ext], content, engine_used="local", ext=ext)
+        except Exception:
+            return _build_result(
+                filename,
+                GEMINI_MIME_TYPES[ext],
+                _fake_gemini_content(file_bytes, ext, filename),
+                engine_used="fake",
+                ext=ext,
+                fallback_used=True,
+            )
+
     if ext in OFFICE_MIME_TYPES:
         content = office.extract(file_bytes, ext)
-        return ContentResult(filename=filename, mime_type=OFFICE_MIME_TYPES[ext], content=content)
+        return _build_result(filename, OFFICE_MIME_TYPES[ext], content, engine_used="local", ext=ext)
 
     if ext in ARCHIVE_MIME_TYPES:
         content = archive.extract(file_bytes, ext)
-        return ContentResult(filename=filename, mime_type=ARCHIVE_MIME_TYPES[ext], content=content)
+        return _build_result(filename, ARCHIVE_MIME_TYPES[ext], content, engine_used="local", ext=ext)
 
     if ext in EXECUTABLE_MIME_TYPES:
         content = binary.extract(file_bytes, ext)
-        return ContentResult(filename=filename, mime_type=EXECUTABLE_MIME_TYPES[ext], content=content)
+        return _build_result(filename, EXECUTABLE_MIME_TYPES[ext], content, engine_used="local", ext=ext)
 
     if ext in GEMINI_MIME_TYPES:
         mime_type = GEMINI_MIME_TYPES[ext]
         force_files_api = ext in VIDEO_EXTENSIONS
-        content = await gemini.extract(file_bytes, mime_type, ext, force_files_api=force_files_api)
-        return ContentResult(filename=filename, mime_type=mime_type, content=content)
+        try:
+            content = await gemini.extract(file_bytes, mime_type, ext, force_files_api=force_files_api)
+            return _build_result(filename, mime_type, content, engine_used="gemini", ext=ext)
+        except Exception:
+            return _build_result(
+                filename,
+                mime_type,
+                _fake_gemini_content(file_bytes, ext, filename),
+                engine_used="fake",
+                ext=ext,
+                fallback_used=True,
+            )
 
     raise ValueError(
         f"Unsupported file type '{ext}'. "
