@@ -248,3 +248,12 @@ def reset_collection() -> None:
 def current_db_path() -> str | None:
     """Return the path the store is currently pointed at (for diagnostics)."""
     return _db_path
+
+
+def list_files() -> list[dict]:
+    """Return one record per indexed file (the index-card rows, chunk_index == -1)."""
+    if collection_count() == 0:
+        return []
+    df = _get_table().to_pandas()
+    cards = df[df["chunk_index"] == -1]
+    return cards[["file_id", "file_path", "ext", "text"]].to_dict("records")
