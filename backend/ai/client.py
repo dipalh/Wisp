@@ -2,7 +2,7 @@ from google import genai
 from config import get_gemini_api_key
 
 MODEL_NAME = "gemini-2.5-flash"
-EMBED_MODEL = "models/text-embedding-004"
+EMBED_MODEL = "models/gemini-embedding-001"
 
 
 def get_client() -> genai.Client:

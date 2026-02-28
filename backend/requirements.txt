@@ -12,3 +12,5 @@ olefile
 xlrd
 httpx
 elevenlabs
+lancedb
+pandas
