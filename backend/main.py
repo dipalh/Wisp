@@ -1,9 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from api.v1.extract import router as extract_router
 from api.v1.ocr import router as ocr_router
 
-app = FastAPI(title="Wisp OCR API", version="1.0.0")
+app = FastAPI(title="Wisp API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -12,6 +13,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(extract_router, prefix="/api/v1/extract", tags=["Extract"])
 app.include_router(ocr_router, prefix="/api/v1/ocr", tags=["OCR"])
 
 

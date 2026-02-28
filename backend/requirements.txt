@@ -1,5 +1,13 @@
 fastapi
 uvicorn[standard]
 python-multipart
-google-generativeai
+google-genai
 python-dotenv
+python-docx
+python-pptx
+openpyxl
+py7zr
+pefile
+olefile
+xlrd
+httpx
