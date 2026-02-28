@@ -766,6 +766,183 @@ p, h1, h2, h3, h4, h5, h6, span, div {
 }
 
 /* ============================================ */
+/* TREE VISUALIZER */
+/* ============================================ */
+
+.tree-visualizer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: 10px;
+}
+
+.tree-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.tree-header-title {
+  min-width: 0;
+}
+
+.tree-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.tree-subtitle {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.tree-up-button {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  background: linear-gradient(135deg, var(--bg-raised) 0%, rgba(36, 36, 36, 0.7) 100%);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-sm);
+  color: var(--accent-blue-light);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.tree-up-button:hover {
+  border-color: var(--border-accent);
+  box-shadow: 0 0 14px rgba(59, 130, 246, 0.2);
+}
+
+.tree-current-path {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--bg-accent);
+  border: 1px solid var(--border-accent);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+
+.path-label {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.path-chev {
+  color: var(--text-tertiary);
+}
+
+.path-value {
+  color: var(--accent-blue-light);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-content {
+  flex: 1;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, var(--bg-raised) 0%, rgba(36, 36, 36, 0.82) 100%);
+  padding: 10px;
+  display: flex;
+  min-height: 0;
+}
+
+.tree-empty,
+.tree-empty-small {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  height: 100%;
+  width: 100%;
+  min-height: 200px;
+}
+
+.tree-empty-small {
+  min-height: 100px;
+}
+
+.tree-empty p,
+.tree-empty-small p {
+  font-size: 13px;
+  color: var(--text-tertiary);
+}
+
+.tree-map-host {
+  width: 100%;
+  height: 100%;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  padding: 3px;
+}
+
+.tree-map-host .recharts-rectangle rect {
+  stroke-width: 2.5;
+  stroke: var(--bg-elevated);
+  rx: 6;
+  ry: 6;
+  shape-rendering: geometricPrecision;
+  transition: filter 140ms ease, opacity 140ms ease;
+}
+
+.tree-map-host .recharts-rectangle:hover rect {
+  filter: brightness(1.25) saturate(1.15);
+  cursor: pointer;
+}
+
+.tree-map-host .recharts-layer {
+  transition: opacity 100ms ease;
+}
+
+.tree-map-tooltip {
+  min-width: 190px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  padding: 10px 12px;
+}
+
+.tree-map-tip-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+  line-height: 1.3;
+}
+
+.tree-map-tip-meta {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.3;
+}
+
+.tree-map-tip-kind {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--accent-blue-light);
+}
+
+/* ============================================ */
 /* RESPONSIVE */
 /* ============================================ */
 
