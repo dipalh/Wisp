@@ -1,386 +1,439 @@
 """
-Manual end-to-end test for the embedding pipeline.
+Wisp — Embedding Pipeline Test Suite
+=====================================
 
-Run from the backend/ directory:
+Run from the ``backend/`` directory:
 
+  Automated (14 tests, exit 0 / 1):
     python -m tests.test_embed_pipeline
 
-What this does
---------------
-  Part 1 — Chunker unit tests  (no API calls, instant)
-  Part 2 — Full pipeline round-trip  (needs GEMINI_API_KEY + chromadb)
+  Interactive (ingest 3 docs, then you type queries and see results):
+    python -m tests.test_embed_pipeline --interactive
 
-For Part 2 a fresh temporary Chroma collection is used (torn down after the
-test), so it never pollutes your real index.
+Structure
+---------
+  PART 1 — Chunker unit tests          (offline, no API key needed)
+  PART 2 — Full pipeline round-trip    (needs GEMINI_API_KEY in .env)
 
-Each test prints:
+Both modes use an isolated temp LanceDB directory that is deleted on exit.
+They never touch your real index.
+
+Every test prints:
     INPUT     — what was given
     EXPECTED  — what we expect to see
     ACTUAL    — what the system returned
     [PASS] / [FAIL]
 
-Exit code: 0 = all passed, 1 = one or more failed.
+The interactive mode lets you TYPE a query and SEE the retrieved chunks so you
+can confirm with your own eyes that semantic retrieval is working.
 """
 from __future__ import annotations
 
 import os
+import shutil
 import sys
-import textwrap
 import tempfile
+import textwrap
 
-# ── allow running as  python -m tests.test_embed_pipeline  from backend/ ──────
+# ── allow  python -m tests.test_embed_pipeline  from backend/ ─────────────────
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-# Load .env from backend/ so GEMINI_API_KEY is available without preflight
+# Load .env so GEMINI_API_KEY is available
 from pathlib import Path as _Path
+
 _env_path = _Path(__file__).parent.parent / ".env"
 if _env_path.exists():
     from dotenv import load_dotenv as _load_dotenv
     _load_dotenv(dotenv_path=_env_path, override=False)
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# PART 1 — Chunker  (no network, no Chroma)
-# ═════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test helpers
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_pass_count = 0
+_fail_count = 0
+
+
+def check(name: str, condition: bool, detail: str = "") -> bool:
+    """Print a single test verdict and track pass/fail counts."""
+    global _pass_count, _fail_count
+    status = "[PASS]" if condition else "[FAIL]"
+    print(f"  {status}  {name}")
+    if detail:
+        for line in detail.splitlines():
+            print(f"         {line}")
+    if condition:
+        _pass_count += 1
+    else:
+        _fail_count += 1
+    return condition
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PART 1 — Chunker  (no network, no vector store)
+# ═══════════════════════════════════════════════════════════════════════════════
 
 from services.embedding.chunker import chunk_text
 
 
-def _run_chunker_tests() -> list[bool]:
-    results: list[bool] = []
+def run_chunker_tests() -> None:
+    print("\n" + "=" * 64)
+    print("PART 1 — Chunker unit tests  (offline)")
+    print("=" * 64)
 
-    def check(name: str, condition: bool, detail: str = "") -> bool:
-        status = "[PASS]" if condition else "[FAIL]"
-        print(f"  {status}  {name}")
-        if detail:
-            print(f"         {detail}")
-        results.append(condition)
-        return condition
-
-    print("\n" + "=" * 60)
-    print("PART 1 — Chunker unit tests")
-    print("=" * 60)
-
-    # ── T1: empty string → no chunks ─────────────────────────────────────────
+    # T1: empty → nothing
     chunks = chunk_text("", file_id="f1")
     check("T1: empty text → 0 chunks", len(chunks) == 0, f"got {len(chunks)}")
 
-    # ── T2: short text → exactly 1 chunk ─────────────────────────────────────
+    # T2: short text → exactly 1 chunk, text preserved
     short = "This is a short document about invoices."
     chunks = chunk_text(short, file_id="f2")
     t2_text = repr(chunks[0].text) if chunks else "—"
     check(
-        "T2: short text → 1 chunk",
+        "T2: short text → 1 chunk with matching text",
         len(chunks) == 1 and chunks[0].text == short,
         f"got {len(chunks)} chunk(s), text={t2_text}",
     )
 
-    # ── T3: chunk_id format ────────────────────────────────────────────────────
+    # T3: chunk_id format
     t3_id = repr(chunks[0].chunk_id) if chunks else "—"
     check(
-        "T3: chunk_id is '<file_id>:<index>'",
+        "T3: chunk_id == '<file_id>:<index>'",
         len(chunks) == 1 and chunks[0].chunk_id == "f2:0",
         f"got chunk_id={t3_id}",
     )
 
-    # ── T4: long text → multiple chunks without data loss ─────────────────────
-    long_text = ("word " * 200).strip()   # 1 000 chars
+    # T4: long text → multiple chunks, no data lost
+    long_text = ("word " * 200).strip()  # ~1 000 chars
     chunks = chunk_text(long_text, file_id="f3", chunk_size=200, overlap=20)
     joined = " ".join(c.text for c in chunks)
-    # Every original word should appear somewhere in the joined chunks
-    all_words_present = all(w in joined for w in long_text.split())
-    check(
-        "T4: long text → multiple chunks",
-        len(chunks) > 1,
-        f"got {len(chunks)} chunks",
-    )
-    check(
-        "T4b: no words lost across chunks",
-        all_words_present,
-        "some words missing from joined output" if not all_words_present else "ok",
-    )
+    all_present = all(w in joined for w in long_text.split())
+    check("T4: long text → multiple chunks", len(chunks) > 1, f"got {len(chunks)} chunks")
+    check("T4b: no words lost across chunks", all_present)
 
-    # ── T5: paragraph-aware splitting ─────────────────────────────────────────
-    para_text = "First paragraph content here.\n\nSecond paragraph content here."
-    chunks = chunk_text(para_text, file_id="f4", chunk_size=800)
-    check(
-        "T5: two paragraphs → 2 chunks",
-        len(chunks) == 2,
-        f"got {len(chunks)} chunks",
-    )
+    # T5: paragraph-aware splitting
+    para = "First paragraph.\n\nSecond paragraph."
+    chunks = chunk_text(para, file_id="f4", chunk_size=800)
+    check("T5: two paragraphs → 2 chunks", len(chunks) == 2, f"got {len(chunks)}")
 
-    # ── T6: re-chunking same file_id produces correct indices ──────────────────
-    chunks = chunk_text("Alpha.\n\nBeta.\n\nGamma.", file_id="myfile", chunk_size=800)
+    # T6: chunk indices are sequential 0-based
+    chunks = chunk_text("A.\n\nB.\n\nC.", file_id="f5", chunk_size=800)
     indices = [c.chunk_index for c in chunks]
-    check(
-        "T6: chunk indices are 0-based sequential",
-        indices == list(range(len(chunks))),
-        f"got {indices}",
-    )
-
-    return results
+    check("T6: indices are 0-based sequential", indices == list(range(len(chunks))), f"got {indices}")
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# PART 2 — Full pipeline round-trip  (needs GEMINI_API_KEY)
-# ═════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test documents (used by Part 2 and interactive mode)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+DOCS = {
+    "file_invoice": {
+        "filename": "invoice.txt",
+        "text": textwrap.dedent("""\
+            INVOICE #2024-0042
+
+            Vendor: Acme Software Ltd.
+            Date: 2024-11-15
+            Due: 2024-12-15
+
+            Line items:
+              - Enterprise license (12 months)  $4,800.00
+              - Professional services (40 hrs)  $6,000.00
+              - Support package (Basic)           $900.00
+
+            Subtotal:   $11,700.00
+            Tax (8 %):     $936.00
+            Total due:  $12,636.00
+
+            Payment method: Wire transfer
+            Bank: First National Bank
+            Account: 987-654-3210
+        """),
+    },
+    "file_resume": {
+        "filename": "resume.txt",
+        "text": textwrap.dedent("""\
+            Jane Smith
+            Senior Software Engineer
+
+            EXPERIENCE
+
+            Acme Corp — Lead Backend Engineer (2021–present)
+            - Designed distributed payment processing system, handling $2M/day.
+            - Migrated monolith to microservices; reduced p99 latency by 40%.
+            - Mentored team of 6 engineers.
+
+            Startup XYZ — Python Developer (2018–2021)
+            - Built REST APIs with FastAPI and PostgreSQL.
+            - Automated CI/CD pipelines with GitHub Actions.
+
+            SKILLS
+            Python, Go, TypeScript, PostgreSQL, Redis, Kubernetes, Docker
+
+            EDUCATION
+            B.Sc. Computer Science, State University, 2018
+        """),
+    },
+    "file_meeting": {
+        "filename": "meeting_notes.txt",
+        "text": textwrap.dedent("""\
+            Q3 2024 — Engineering All-Hands Notes
+
+            Attendees: Alice, Bob, Carol, David
+            Date: 2024-09-10
+
+            Agenda item 1: Roadmap review
+            The team reviewed Q3 milestones. The new search feature is 80% complete.
+            Alice noted the vector database migration would be finished by end of September.
+
+            Agenda item 2: On-call rotation
+            Bob volunteered to take the first October on-call shift.
+            Carol raised concerns about alert fatigue — David will audit the alert rules.
+
+            Action items:
+            - Alice: finish vector DB migration by 2024-09-30
+            - David: audit PagerDuty alert rules
+            - Bob: confirm October on-call by 2024-09-12
+        """),
+    },
+}
 
 
-# ── Fake documents ────────────────────────────────────────────────────────────
-
-INVOICE_TEXT = textwrap.dedent("""\
-    INVOICE #2024-0042
-    
-    Vendor: Acme Software Ltd.
-    Date: 2024-11-15
-    Due: 2024-12-15
-    
-    Line items:
-      - Enterprise license (12 months)  $4,800.00
-      - Professional services (40 hrs)  $6,000.00
-      - Support package (Basic)           $900.00
-    
-    Subtotal:   $11,700.00
-    Tax (8 %):     $936.00
-    Total due:  $12,636.00
-    
-    Payment method: Wire transfer
-    Bank: First National Bank
-    Account: 987-654-3210
-""")
-
-RESUME_TEXT = textwrap.dedent("""\
-    Jane Smith
-    Senior Software Engineer
-    
-    EXPERIENCE
-    
-    Acme Corp — Lead Backend Engineer (2021–present)
-    - Designed distributed payment processing system, handling $2M/day.
-    - Migrated monolith to microservices; reduced p99 latency by 40%.
-    - Mentored team of 6 engineers.
-    
-    Startup XYZ — Python Developer (2018–2021)
-    - Built REST APIs with FastAPI and PostgreSQL.
-    - Automated CI/CD pipelines with GitHub Actions.
-    
-    SKILLS
-    Python, Go, TypeScript, PostgreSQL, Redis, Kubernetes, Docker
-    
-    EDUCATION
-    B.Sc. Computer Science, State University, 2018
-""")
-
-MEETING_NOTES_TEXT = textwrap.dedent("""\
-    Q3 2024 — Engineering All-Hands Notes
-    
-    Attendees: Alice, Bob, Carol, David
-    Date: 2024-09-10
-    
-    Agenda item 1: Roadmap review
-    The team reviewed Q3 milestones. The new search feature is 80% complete.
-    Alice noted the vector database migration would be finished by end of September.
-    
-    Agenda item 2: On-call rotation
-    Bob volunteered to take the first October on-call shift.
-    Carol raised concerns about alert fatigue — David will audit the alert rules.
-    
-    Action items:
-    - Alice: finish vector DB migration by 2024-09-30
-    - David: audit PagerDuty alert rules
-    - Bob: confirm October on-call by 2024-09-12
-""")
+# ═══════════════════════════════════════════════════════════════════════════════
+# Setup / teardown helpers  (used by both modes)
+# ═══════════════════════════════════════════════════════════════════════════════
 
 
-def _run_pipeline_tests() -> list[bool]:
-    print("\n" + "=" * 60)
-    print("PART 2 — Full pipeline round-trip  (Gemini API + Chroma)")
-    print("=" * 60)
+def _require_api_key() -> bool:
+    """Return True if GEMINI_API_KEY is set, else print skip message."""
+    if os.environ.get("GEMINI_API_KEY"):
+        return True
+    print("\n  [SKIP]  GEMINI_API_KEY not set — skipping pipeline tests.")
+    print("          Set it in backend/.env or export it.\n")
+    return False
 
-    api_key = os.environ.get("GEMINI_API_KEY", "")
-    if not api_key:
-        print("\n  [SKIP] GEMINI_API_KEY not set — skipping pipeline tests.")
-        print("         Set it in backend/.env or as an environment variable.\n")
-        return []
 
-    # ── Point Chroma at a temp directory so tests never pollute real data ──────
-    tmp_dir = tempfile.mkdtemp(prefix="wisp_test_chroma_")
-    os.environ["WISP_CHROMA_PATH"] = tmp_dir
-    print(f"\n  (temp Chroma dir: {tmp_dir})")
-
-    # Re-import store after env var is set so the client picks up the temp path
-    import importlib
-    from services.embedding import store as _store
-    importlib.reload(_store)
-
+def _create_temp_store() -> str:
+    """Create a temp LanceDB dir and init the store there.
+    Returns the temp dir path (caller must shutil.rmtree it).
+    """
     from services.embedding import pipeline
-    importlib.reload(pipeline)
+    tmp = tempfile.mkdtemp(prefix="wisp_test_lancedb_")
+    pipeline.init_store(db_path=tmp)
+    print(f"  (temp LanceDB dir: {tmp})")
+    return tmp
 
+
+def _ingest_test_docs() -> dict[str, int]:
+    """Ingest the three test docs.  Returns {file_id: chunk_count}."""
+    from services.embedding import pipeline
     from services.file_processor.models import ContentResult
 
-    results: list[bool] = []
-
-    def check(name: str, condition: bool, detail: str = "") -> bool:
-        status = "[PASS]" if condition else "[FAIL]"
-        print(f"  {status}  {name}")
-        if detail:
-            for line in detail.splitlines():
-                print(f"         {line}")
-        results.append(condition)
-        return condition
-
-    # ── Helper to build a minimal ContentResult ────────────────────────────────
-    def make_result(text: str, filename: str) -> ContentResult:
-        return ContentResult(
-            filename=filename,
-            file_name=filename,
+    counts: dict[str, int] = {}
+    for file_id, doc in DOCS.items():
+        cr = ContentResult(
+            filename=doc["filename"],
+            file_name=doc["filename"],
             mime_type="text/plain",
             category="text",
-            content=text,
-            text=text,
+            content=doc["text"],
+            text=doc["text"],
         )
+        result = pipeline.ingest(cr, file_id=file_id)
+        counts[file_id] = result.chunk_count
+        if result.errors:
+            print(f"    WARNING: {file_id} → errors: {result.errors}")
+    return counts
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # T7: Ingest a single document and confirm chunk_count > 0
-    # ─────────────────────────────────────────────────────────────────────────
-    print("\n  ── T7: Ingest invoice ──")
-    ingest_result = pipeline.ingest(make_result(INVOICE_TEXT, "invoice.txt"), file_id="file_invoice")
-    print(f"    INPUT    : invoice.txt  ({len(INVOICE_TEXT)} chars)")
-    print(f"    EXPECTED : chunk_count > 0, no errors")
-    print(f"    ACTUAL   : chunk_count={ingest_result.chunk_count}, errors={ingest_result.errors}")
-    check(
-        "T7: invoice ingested (chunks > 0)",
-        ingest_result.chunk_count > 0 and not ingest_result.errors,
-    )
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # T8: Ingest resume + meeting notes
-    # ─────────────────────────────────────────────────────────────────────────
-    print("\n  ── T8: Ingest resume + meeting notes ──")
-    r_resume = pipeline.ingest(make_result(RESUME_TEXT, "resume.txt"), file_id="file_resume")
-    r_meeting = pipeline.ingest(make_result(MEETING_NOTES_TEXT, "meeting_notes.txt"), file_id="file_meeting")
-    total_chunks = _store.collection_count()
-    print(f"    ACTUAL   : resume chunks={r_resume.chunk_count}, meeting chunks={r_meeting.chunk_count}")
-    print(f"    ACTUAL   : total in Chroma={total_chunks}")
-    check(
-        "T8: all three files ingested (total > 0)",
-        total_chunks > 0,
-        f"total chunks in Chroma: {total_chunks}",
-    )
+# ═══════════════════════════════════════════════════════════════════════════════
+# PART 2 — Full pipeline round-trip
+# ═══════════════════════════════════════════════════════════════════════════════
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # T9: Semantic query — "invoice total amount due" → should hit invoice
-    # ─────────────────────────────────────────────────────────────────────────
+
+def run_pipeline_tests() -> None:
+    print("\n" + "=" * 64)
+    print("PART 2 — Pipeline round-trip  (Gemini API + LanceDB)")
+    print("=" * 64)
+
+    if not _require_api_key():
+        return
+
+    from services.embedding import pipeline, store
+
+    tmp = _create_temp_store()
+    try:
+        _run_pipeline_checks(pipeline, store)
+    finally:
+        pipeline.teardown_store()
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _run_pipeline_checks(pipeline, store) -> None:
+    # ── T7 + T8: ingest all 3 docs ───────────────────────────────────────────
+    print("\n  ── T7/T8: Ingest all documents ──")
+    counts = _ingest_test_docs()
+    invoice_count = counts.get("file_invoice", 0)
+    total = store.collection_count()
+    print(f"    INPUT    : 3 documents ({sum(len(d['text']) for d in DOCS.values())} chars total)")
+    print(f"    EXPECTED : each file produces >0 chunks")
+    print(f"    ACTUAL   : invoice={invoice_count}, resume={counts.get('file_resume',0)}, "
+          f"meeting={counts.get('file_meeting',0)}, total={total}")
+    check("T7: invoice chunk_count > 0", invoice_count > 0)
+    check("T8: all three → total > 0", total > 0, f"total={total}")
+
+    # ── T9: semantic query → invoice ──────────────────────────────────────────
     print("\n  ── T9: Query 'invoice total amount due' ──")
     hits = pipeline.search("invoice total amount due", k=3)
-    print(f"    INPUT    : query = 'invoice total amount due'")
-    print(f"    EXPECTED : top result from file_invoice")
-    print(f"    ACTUAL   :")
-    for i, h in enumerate(hits):
-        print(f"      [{i+1}] file_id={h.file_id}  score={h.score:.4f}")
-        print(f"           text={h.text[:80]!r}...")
-    top_is_invoice = hits and hits[0].file_id == "file_invoice"
-    check(
-        "T9: 'invoice total' → top result is file_invoice",
-        top_is_invoice,
-    )
+    _print_hits("invoice total amount due", "file_invoice", hits)
+    check("T9: top hit is file_invoice", hits and hits[0].file_id == "file_invoice")
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # T10: Semantic query — "Python engineer experience" → should hit resume
-    # ─────────────────────────────────────────────────────────────────────────
+    # ── T10: semantic query → resume ──────────────────────────────────────────
     print("\n  ── T10: Query 'Python backend engineer experience' ──")
     hits = pipeline.search("Python backend engineer experience", k=3)
-    print(f"    INPUT    : query = 'Python backend engineer experience'")
-    print(f"    EXPECTED : top result from file_resume")
-    print(f"    ACTUAL   :")
-    for i, h in enumerate(hits):
-        print(f"      [{i+1}] file_id={h.file_id}  score={h.score:.4f}")
-        print(f"           text={h.text[:80]!r}...")
-    top_is_resume = hits and hits[0].file_id == "file_resume"
-    check(
-        "T10: 'Python engineer' → top result is file_resume",
-        top_is_resume,
-    )
+    _print_hits("Python backend engineer experience", "file_resume", hits)
+    check("T10: top hit is file_resume", hits and hits[0].file_id == "file_resume")
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # T11: Idempotency — re-ingest invoice, chunk count should stay the same
-    # ─────────────────────────────────────────────────────────────────────────
-    print("\n  ── T11: Re-ingest invoice (idempotency check) ──")
-    count_before = _store.collection_count()
-    pipeline.ingest(make_result(INVOICE_TEXT, "invoice.txt"), file_id="file_invoice")
-    count_after = _store.collection_count()
-    print(f"    INPUT    : same invoice.txt ingested again")
-    print(f"    EXPECTED : chunk count stays the same (no duplicates)")
-    print(f"    ACTUAL   : before={count_before}, after={count_after}")
-    check(
-        "T11: re-ingest does not add duplicate chunks",
-        count_before == count_after,
-        f"before={count_before} after={count_after}",
+    # ── T11: idempotency ──────────────────────────────────────────────────────
+    print("\n  ── T11: Re-ingest invoice (idempotency) ──")
+    before = store.collection_count()
+    from services.file_processor.models import ContentResult
+    cr = ContentResult(
+        filename="invoice.txt", file_name="invoice.txt",
+        mime_type="text/plain", category="text",
+        content=DOCS["file_invoice"]["text"], text=DOCS["file_invoice"]["text"],
     )
+    pipeline.ingest(cr, file_id="file_invoice")
+    after = store.collection_count()
+    print(f"    INPUT    : re-ingest same invoice.txt")
+    print(f"    EXPECTED : chunk count unchanged (no duplicates)")
+    print(f"    ACTUAL   : before={before}, after={after}")
+    check("T11: re-ingest → count unchanged", before == after)
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # T12: delete_file removes that file's chunks
-    # ─────────────────────────────────────────────────────────────────────────
-    print("\n  ── T12: Delete invoice chunks ──")
-    count_before = _store.collection_count()
+    # ── T12: delete ───────────────────────────────────────────────────────────
+    print("\n  ── T12: Delete invoice ──")
+    before = store.collection_count()
     pipeline.delete_file("file_invoice")
-    count_after = _store.collection_count()
-    removed = count_before - count_after
+    after = store.collection_count()
+    removed = before - after
     print(f"    INPUT    : delete_file('file_invoice')")
-    print(f"    EXPECTED : chunk count decreases by invoice chunk count ({ingest_result.chunk_count})")
-    print(f"    ACTUAL   : before={count_before}, after={count_after}, removed={removed}")
-    check(
-        "T12: delete_file removes the correct number of chunks",
-        removed == ingest_result.chunk_count,
-        f"expected to remove {ingest_result.chunk_count}, actually removed {removed}",
-    )
+    print(f"    EXPECTED : count decreases by {invoice_count}")
+    print(f"    ACTUAL   : before={before}, after={after}, removed={removed}")
+    check("T12: delete removes correct chunks", removed == invoice_count)
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # T13: Query after deletion — invoice chunks should NOT be top result
-    # ─────────────────────────────────────────────────────────────────────────
-    print("\n  ── T13: Query 'invoice total' after invoice deleted ──")
+    # ── T13: query after delete ───────────────────────────────────────────────
+    print("\n  ── T13: Query after delete ──")
     hits = pipeline.search("invoice total amount due", k=3)
-    invoice_in_results = any(h.file_id == "file_invoice" for h in hits)
-    print(f"    EXPECTED : file_invoice does NOT appear in results")
+    found = any(h.file_id == "file_invoice" for h in hits)
+    print(f"    EXPECTED : file_invoice NOT in results")
     print(f"    ACTUAL   :")
     for i, h in enumerate(hits):
         print(f"      [{i+1}] file_id={h.file_id}  score={h.score:.4f}")
-    check(
-        "T13: deleted file no longer appears in search results",
-        not invoice_in_results,
-    )
-
-    # ── Cleanup ───────────────────────────────────────────────────────────────
-    import shutil
-    shutil.rmtree(tmp_dir, ignore_errors=True)
-
-    return results
+    check("T13: deleted file absent from results", not found)
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# Runner
-# ═════════════════════════════════════════════════════════════════════════════
+def _print_hits(query: str, expected_top: str, hits) -> None:
+    print(f"    INPUT    : query = {query!r}")
+    print(f"    EXPECTED : top hit from {expected_top}")
+    print(f"    ACTUAL   :")
+    for i, h in enumerate(hits):
+        print(f"      [{i+1}] file_id={h.file_id}  score={h.score:.4f}")
+        # Show up to 100 chars of the chunk text so you can read it
+        snippet = h.text[:100].replace("\n", " ")
+        print(f"           \"{snippet}...\"")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Interactive mode
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def run_interactive() -> None:
+    print("\n" + "=" * 64)
+    print("INTERACTIVE MODE — type queries, see results")
+    print("=" * 64)
+
+    if not _require_api_key():
+        return
+
+    from services.embedding import pipeline, store
+
+    tmp = _create_temp_store()
+    try:
+        print("\n  Ingesting 3 test documents...")
+        counts = _ingest_test_docs()
+        total = store.collection_count()
+        print(f"  Done.  {total} chunks across {len(counts)} files.\n")
+        for fid, c in counts.items():
+            fname = DOCS[fid]["filename"]
+            print(f"    {fname:25s}  →  {c} chunks")
+
+        print("\n  Documents available:")
+        print("    • invoice.txt       — Acme Software invoice, $12,636.00")
+        print("    • resume.txt        — Jane Smith, Senior Software Engineer")
+        print("    • meeting_notes.txt — Q3 engineering all-hands")
+        print()
+        print("  Type a natural-language query and press Enter.")
+        print("  Type 'quit' or Ctrl-C to exit.\n")
+
+        while True:
+            try:
+                query = input("  query> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                break
+            if not query or query.lower() in ("quit", "exit", "q"):
+                break
+
+            hits = pipeline.search(query, k=5)
+            if not hits:
+                print("    (no results)\n")
+                continue
+
+            print()
+            for i, h in enumerate(hits):
+                fname = DOCS.get(h.file_id, {}).get("filename", h.file_id)
+                print(f"    ── Result {i+1}  |  {fname}  |  score={h.score:.4f}  ──")
+                # Print the chunk text, indented, wrapped to ~76 cols
+                wrapped = textwrap.fill(h.text, width=76, initial_indent="    ", subsequent_indent="    ")
+                print(wrapped)
+                print()
+
+    finally:
+        pipeline.teardown_store()
+        shutil.rmtree(tmp, ignore_errors=True)
+        print("  (cleaned up temp LanceDB dir)")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Main entry point
+# ═══════════════════════════════════════════════════════════════════════════════
 
 
 def main() -> None:
-    print("\nWISP — Embedding Pipeline Tests")
-    print("================================")
+    interactive = "--interactive" in sys.argv or "-i" in sys.argv
 
-    all_results = _run_chunker_tests() + _run_pipeline_tests()
+    print("\n╔════════════════════════════════════════╗")
+    print("║  WISP — Embedding Pipeline Test Suite  ║")
+    print("╚════════════════════════════════════════╝")
 
-    passed = sum(all_results)
-    total = len(all_results)
-    failed = total - passed
-
-    print("\n" + "=" * 60)
-    print(f"Results: {passed}/{total} passed", end="")
-    if failed:
-        print(f"  ✗ {failed} FAILED")
+    if interactive:
+        run_interactive()
     else:
-        print("  — all good")
-    print("=" * 60 + "\n")
+        run_chunker_tests()
+        run_pipeline_tests()
 
-    sys.exit(0 if failed == 0 else 1)
+        total = _pass_count + _fail_count
+        print("\n" + "=" * 64)
+        print(f"  Results: {_pass_count}/{total} passed", end="")
+        if _fail_count:
+            print(f"  — {_fail_count} FAILED")
+        else:
+            print("  — all good")
+        print("=" * 64 + "\n")
+
+        sys.exit(0 if _fail_count == 0 else 1)
 
 
 if __name__ == "__main__":

@@ -3,9 +3,9 @@ Embedding pipeline — the glue between extraction, chunking, and the vector sto
 
 Public surface
 --------------
-  ingest(result, file_id)           — ContentResult → chunks → embeddings → Chroma
-  search(query, k, where)           — query string → Chroma top-k hits
-  delete_file(file_id)              — remove a file's chunks from Chroma
+  ingest(result, file_id)           — ContentResult → chunks → embeddings → LanceDB
+  search(query, k, where)           — query string → LanceDB top-k hits
+  delete_file(file_id)              — remove a file's chunks from LanceDB
 
 These are the only functions the rest of the app (scan pipeline, search endpoint,
 agent tool router) should call.  The chunker and store are implementation details.
@@ -56,9 +56,9 @@ def ingest(
     Steps
     -----
     1. Chunk ``result.content`` into ≤``chunk_size``-char segments.
-    2. Batch-embed all chunks with Gemini text-embedding-004.
+    2. Batch-embed all chunks with Gemini gemini-embedding-001.
     3. Delete any existing chunks for ``file_id`` (idempotency).
-    4. Upsert new chunks + embeddings into Chroma.
+    4. Upsert new chunks + embeddings into LanceDB.
     5. Return an IngestResult with counts and any non-fatal errors.
 
     Args:
@@ -146,7 +146,7 @@ def search(
     Args:
         query: Natural-language query string.
         k:     Maximum number of results to return.
-        where: Optional Chroma metadata filter (e.g. ``{"ext": ".pdf"}``).
+        where: Optional LanceDB metadata filter (e.g. ``{"ext": ".pdf"}``).
 
     Returns:
         List of SearchHit ordered by descending similarity score.
@@ -161,3 +161,16 @@ def search(
 def delete_file(file_id: str) -> None:
     """Remove all chunks for a file from the vector store (e.g. on file deletion)."""
     store.delete_by_file_id(file_id)
+
+
+# ── Store lifecycle (delegated, for test convenience) ─────────────────────────
+
+
+def init_store(db_path: str | None = None) -> None:
+    """Initialise (or re-point) the underlying vector store."""
+    store.init(db_path=db_path)
+
+
+def teardown_store() -> None:
+    """Close the vector store connection."""
+    store.teardown()

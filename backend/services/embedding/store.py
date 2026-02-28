@@ -2,7 +2,7 @@
 LanceDB vector-store wrapper for the Wisp embedding pipeline.
 
 Responsibilities:
-  - Manage the persistent LanceDB connection (lazy singleton).
+  - Manage persistent LanceDB connections (default path or caller-supplied).
   - Upsert chunks (with pre-computed embeddings).
   - Delete all chunks that belong to a file (for re-index idempotency).
   - Query top-k nearest neighbours and return hydrated SearchHit objects.
@@ -15,7 +15,7 @@ Table schema ("wisp_chunks")
   file_path    : str
   ext          : str
   text         : str   — the raw chunk text (used as citation)
-  vector       : list<float32>[EMBED_DIM]  — Gemini text-embedding-004 vector
+  vector       : list<float32>[EMBED_DIM]  — gemini-embedding-001 vector
 """
 from __future__ import annotations
 
@@ -36,8 +36,8 @@ TABLE_NAME = "wisp_chunks"
 EMBED_DIM = 3072  # gemini-embedding-001 output dimension
 
 
-def _get_persist_dir() -> str:
-    return os.environ.get("WISP_CHROMA_PATH", _DEFAULT_PERSIST_DIR)
+def _default_persist_dir() -> str:
+    return os.environ.get("WISP_LANCEDB_PATH", _DEFAULT_PERSIST_DIR)
 
 
 # ── Schema ────────────────────────────────────────────────────────────────────
@@ -53,18 +53,43 @@ _SCHEMA = pa.schema([
 ])
 
 
-# ── Singleton ─────────────────────────────────────────────────────────────────
+# ── Connection management ─────────────────────────────────────────────────────
+#
+# The default singleton is used by production code.  Tests (and anyone who needs
+# isolation) call  init(db_path="/tmp/...")  to point at a fresh directory,
+# then  teardown()  to close and reset.
 
 _db: lancedb.DBConnection | None = None
 _table: lancedb.table.Table | None = None
+_db_path: str | None = None
+
+
+def init(db_path: str | None = None) -> None:
+    """Initialise (or re-initialise) the LanceDB connection.
+
+    Args:
+        db_path: Explicit directory.  If *None*, uses the WISP_LANCEDB_PATH
+                 env-var or ``~/.wisp/lancedb``.
+    """
+    global _db, _table, _db_path
+    _db_path = db_path or _default_persist_dir()
+    Path(_db_path).mkdir(parents=True, exist_ok=True)
+    _db = lancedb.connect(_db_path)
+    _table = None  # will be lazily opened by _get_table()
+
+
+def teardown() -> None:
+    """Close the connection and reset module state.  Safe to call multiple times."""
+    global _db, _table, _db_path
+    _db = None
+    _table = None
+    _db_path = None
 
 
 def _get_table() -> lancedb.table.Table:
     global _db, _table
     if _db is None:
-        persist_dir = _get_persist_dir()
-        Path(persist_dir).mkdir(parents=True, exist_ok=True)
-        _db = lancedb.connect(persist_dir)
+        init()  # first call — use defaults
     if _table is None:
         existing = _db.table_names()
         if TABLE_NAME in existing:
@@ -218,3 +243,8 @@ def reset_collection() -> None:
             pass
     _table = None
     _get_table()  # recreate empty table
+
+
+def current_db_path() -> str | None:
+    """Return the path the store is currently pointed at (for diagnostics)."""
+    return _db_path
