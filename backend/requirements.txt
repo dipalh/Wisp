@@ -11,3 +11,4 @@ pefile
 olefile
 xlrd
 httpx
+elevenlabs
