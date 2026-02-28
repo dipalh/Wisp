@@ -1,11 +1,4 @@
-import os
-import tempfile
-
-from google.genai import types
-
-from services.file_processor.client import MODEL_NAME, get_client
-
-INLINE_SIZE_LIMIT = 15 * 1024 * 1024  # 15 MB
+from ai.generate import generate_with_file
 
 _PROMPTS: dict[str, str] = {
     "image": (
@@ -41,40 +34,6 @@ async def extract(
     ext: str,
     force_files_api: bool = False,
 ) -> str:
-    client = get_client()
-    prompt = _prompt_for(mime_type)
-
-    if not force_files_api and len(file_bytes) <= INLINE_SIZE_LIMIT:
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=[
-                prompt,
-                types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
-            ],
-        )
-    else:
-        response = _via_files_api(client, file_bytes, mime_type, ext, prompt)
-
-    return response.text
-
-
-def _via_files_api(client, file_bytes: bytes, mime_type: str, ext: str, prompt: str):
-    tmp_path = None
-    uploaded = None
-    try:
-        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
-            tmp.write(file_bytes)
-            tmp_path = tmp.name
-        uploaded = client.files.upload(
-            path=tmp_path,
-            config=types.UploadFileConfig(mime_type=mime_type),
-        )
-        return client.models.generate_content(
-            model=MODEL_NAME,
-            contents=[prompt, uploaded],
-        )
-    finally:
-        if tmp_path:
-            os.unlink(tmp_path)
-        if uploaded:
-            client.files.delete(name=uploaded.name)
+    return await generate_with_file(
+        _prompt_for(mime_type), file_bytes, mime_type, ext, force_files_api
+    )
