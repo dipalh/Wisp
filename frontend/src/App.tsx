@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Treemap, ResponsiveContainer, Tooltip } from 'recharts';
+import TreeVisualizer from './TreeVisualizer';
 
 type TreemapNode = {
   name: string;
@@ -246,64 +247,13 @@ function App() {
           {/* Main Content Grid */}
           <main className="workspace-grid">
 
-            {/* Treemap panel */}
+            {/* Tree Visualizer panel */}
             <div className="panel panel-large">
-              <div className="panel-title">
-                <span>Disk usage</span>
-                <div className="breadcrumb-nav">
-                  {breadcrumbs.map((node, idx) => (
-                    <>
-                      {idx > 0 && <span className="breadcrumb-sep">/</span>}
-                      <button
-                        key={node.path}
-                        onClick={() => setFocusPath(node.path)}
-                        className={idx === breadcrumbs.length - 1 ? 'breadcrumb-active' : 'breadcrumb-link'}
-                      >
-                        {node.name === node.path ? 'root' : node.name}
-                      </button>
-                    </>
-                  ))}
-                </div>
-              </div>
-
-              <div className="panel-content-fill">
-                {treemapData.length === 0 ? (
-                  <div className="panel-empty">
-                    <p>Click blocks to explore subfolders</p>
-                  </div>
-                ) : (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <Treemap
-                      data={treemapData as TreemapNode[]}
-                      dataKey="size"
-                      stroke="#0a0a0a"
-                      fill="#3b82f6"
-                      onClick={(payload: TreemapNode) => {
-                        if (payload.type === 'folder') {
-                          setFocusPath(payload.path);
-                        }
-                      }}
-                    >
-                      <Tooltip
-                        content={({ active, payload }) => {
-                          if (!active || !payload?.[0]?.payload) return null;
-                          const item = payload[0].payload as TreemapNode;
-                          return (
-                            <div className="chart-tooltip">
-                              <div className="tooltip-name">{item.name}</div>
-                              <div className="tooltip-meta">
-                                <span>{formatBytes(item.size)}</span>
-                                <span className="sep">•</span>
-                                <span>{item.type}</span>
-                              </div>
-                            </div>
-                          );
-                        }}
-                      />
-                    </Treemap>
-                  </ResponsiveContainer>
-                )}
-              </div>
+              <TreeVisualizer 
+                tree={tree} 
+                focusPath={focusPath}
+                onNavigate={(path) => setFocusPath(path)}
+              />
             </div>
 
             {/* Sidebar stack */}
