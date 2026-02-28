@@ -54,6 +54,32 @@ class AskResult:
 # ── Core pipeline ─────────────────────────────────────────────────────────────
 
 
+MAX_CHUNKS_PER_FILE = 50  # prevent any single file from flooding the index
+
+
+def _downsample_chunks(chunks: list[Chunk], max_chunks: int = MAX_CHUNKS_PER_FILE) -> list[Chunk]:
+    """Keep first + last + evenly-spaced middle chunks to stay within budget."""
+    if len(chunks) <= max_chunks:
+        return chunks
+    if max_chunks <= 2:
+        return chunks[:max_chunks]
+
+    # Always keep first and last
+    sampled = [chunks[0]]
+    inner_budget = max_chunks - 2
+    step = (len(chunks) - 2) / (inner_budget + 1)
+    for i in range(1, inner_budget + 1):
+        idx = int(i * step)
+        sampled.append(chunks[idx])
+    sampled.append(chunks[-1])
+
+    # Re-index so chunk_index is sequential
+    for new_idx, chunk in enumerate(sampled):
+        chunk.chunk_index = new_idx
+        chunk.chunk_id = f"{chunk.file_id}:{new_idx}"
+    return sampled
+
+
 def ingest(
     result: ContentResult,
     file_id: str,
@@ -100,10 +126,26 @@ def ingest(
             skipped=True,
         )
 
+    # ── 1b. Downsample if a file produced too many chunks ─────────────────
+    chunks = _downsample_chunks(chunks)
+
+    # ── 1c. Prepend a file "index card" so inventory queries work ─────────
+    card_text = (
+        f"[FILE INDEX] name={file_path}  type={ext}  "
+        f"engine={result.engine_used}  chunks={len(chunks)}"
+    )
+    card = Chunk(
+        chunk_id=f"{file_id}:card",
+        file_id=file_id,
+        chunk_index=-1,  # special: comes before real chunks
+        text=card_text,
+    )
+    all_chunks = [card] + chunks
+
     # ── 2. Embed ──────────────────────────────────────────────────────────────
     errors: list[str] = []
     try:
-        embeddings = embed_batch([c.text for c in chunks])
+        embeddings = embed_batch([c.text for c in all_chunks])
     except Exception as exc:
         return IngestResult(
             file_id=file_id,
@@ -121,7 +163,7 @@ def ingest(
     # ── 4. Upsert ─────────────────────────────────────────────────────────────
     try:
         store.upsert_chunks(
-            chunks=chunks,
+            chunks=all_chunks,
             embeddings=embeddings,
             file_path=file_path,
             ext=ext,
@@ -138,7 +180,7 @@ def ingest(
     return IngestResult(
         file_id=file_id,
         file_path=file_path,
-        chunk_count=len(chunks),
+        chunk_count=len(all_chunks),
         errors=errors,
     )
 
@@ -150,20 +192,40 @@ def search(
     query: str,
     k: int = 5,
     where: dict | None = None,
+    max_per_file: int = 2,
 ) -> list[SearchHit]:
     """
-    Semantic search over indexed files.
+    Semantic search over indexed files, with diversity.
+
+    Retrieves more candidates than needed, then caps results per file_id so
+    no single file dominates the result set.
 
     Args:
-        query: Natural-language query string.
-        k:     Maximum number of results to return.
-        where: Optional LanceDB metadata filter (e.g. ``{"ext": ".pdf"}``).
+        query:        Natural-language query string.
+        k:            Maximum number of results to return.
+        where:        Optional LanceDB metadata filter.
+        max_per_file: Max hits from any single file (set high to disable).
 
     Returns:
         List of SearchHit ordered by descending similarity score.
     """
+    # Fetch extra candidates to allow diversity filtering
+    fetch_k = max(k * 4, 20)
     query_embedding = embed_text(query)
-    return store.query(query_embedding, k=k, where=where)
+    raw_hits = store.query(query_embedding, k=fetch_k, where=where)
+
+    # Diversify: cap hits per file
+    file_counts: dict[str, int] = {}
+    diverse: list[SearchHit] = []
+    for hit in raw_hits:
+        count = file_counts.get(hit.file_id, 0)
+        if count < max_per_file:
+            diverse.append(hit)
+            file_counts[hit.file_id] = count + 1
+            if len(diverse) >= k:
+                break
+
+    return diverse
 
 
 # ── RAG (Retrieve → Answer → Ground) ─────────────────────────────────────────
@@ -200,7 +262,7 @@ def _build_rag_prompt(query: str, hits: list[SearchHit]) -> str:
 
 def ask(
     query: str,
-    k: int = 5,
+    k: int = 10,
     where: dict | None = None,
 ) -> AskResult:
     """
