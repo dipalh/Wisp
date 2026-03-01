@@ -485,6 +485,45 @@ ipcMain.handle('files:trash', async (_, targetPath) => {
   }
 });
 
+ipcMain.handle('file:readBase64', async (_, filePath) => {
+  const bytes = await fs.readFile(filePath);
+  return bytes.toString('base64');
+});
+
+ipcMain.handle('file:pickForOcr', async () => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openFile'],
+    filters: [{ name: 'Images & PDFs', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'tiff', 'pdf'] }],
+  });
+  return result.canceled ? null : result.filePaths[0];
+});
+
+ipcMain.handle('ocr:extract', async (_, filePath) => {
+  const bytes = await fs.readFile(filePath);
+  const blob = new Blob([bytes]);
+  const form = new FormData();
+  form.append('file', blob, path.basename(filePath));
+  const resp = await fetch(`${apiUrl}/api/v1/ocr/`, { method: 'POST', body: form });
+  if (!resp.ok) {
+    const detail = await resp.text().catch(() => '');
+    throw new Error(`OCR failed (HTTP ${resp.status}): ${detail}`);
+  }
+  return resp.json();
+});
+
+ipcMain.handle('ocr:extractBuffer', async (_, base64Data, filename) => {
+  const bytes = Buffer.from(base64Data, 'base64');
+  const blob = new Blob([bytes]);
+  const form = new FormData();
+  form.append('file', blob, filename || 'selection.png');
+  const resp = await fetch(`${apiUrl}/api/v1/ocr/`, { method: 'POST', body: form });
+  if (!resp.ok) {
+    const detail = await resp.text().catch(() => '');
+    throw new Error(`OCR failed (HTTP ${resp.status}): ${detail}`);
+  }
+  return resp.json();
+});
+
 app.whenReady().then(() => {
   createWindow();
   app.on('activate', () => {

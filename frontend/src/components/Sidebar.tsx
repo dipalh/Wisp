@@ -6,6 +6,7 @@ import {
     MessageSquare,
     PlusCircle,
     FileText,
+    ScanText,
 } from 'lucide-react';
 import type { ViewId } from './AppShell';
 
@@ -20,6 +21,7 @@ const NAV_ITEMS: { id: ViewId; icon: typeof FolderSearch; label: string }[] = [
     { id: 'scan', icon: FolderSearch, label: 'Scan & Index' },
     { id: 'clean', icon: Sparkles, label: 'Clean Up' },
     { id: 'visualize', icon: LayoutGrid, label: 'Visualize' },
+    { id: 'extract', icon: ScanText, label: 'Extract Text' },
     { id: 'memory', icon: Brain, label: 'Memory' },
     { id: 'assistant', icon: MessageSquare, label: 'Assistant' },
 ];
@@ -31,7 +33,7 @@ const viewToTab = (view: ViewId): TabId => {
 };
 
 const tabViews: Record<TabId, ViewId[]> = {
-    files: ['scan', 'clean', 'visualize'],
+    files: ['scan', 'clean', 'visualize', 'extract'],
     search: ['memory'],
     assistant: ['assistant'],
 };

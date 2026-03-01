@@ -6,8 +6,9 @@ import CleanView from '../views/CleanView';
 import VisualizeView from '../views/VisualizeView';
 import MemoryView from '../views/MemoryView';
 import AssistantView from '../views/AssistantView';
+import ExtractView from '../views/ExtractView';
 
-export type ViewId = 'scan' | 'clean' | 'visualize' | 'memory' | 'assistant';
+export type ViewId = 'scan' | 'clean' | 'visualize' | 'memory' | 'assistant' | 'extract';
 
 export type TreeNode = {
     name: string;
@@ -48,6 +49,7 @@ const VIEW_TITLES: Record<ViewId, string> = {
     visualize: 'Visualize',
     memory: 'Memory',
     assistant: 'Assistant',
+    extract: 'Extract',
 };
 
 const VIEW_SUBTITLES: Record<ViewId, string> = {
@@ -56,6 +58,7 @@ const VIEW_SUBTITLES: Record<ViewId, string> = {
     visualize: 'Explore storage usage',
     memory: 'Search files by meaning',
     assistant: 'AI-powered file assistant',
+    extract: 'Pull text from images and PDFs',
 };
 
 export default function AppShell() {
@@ -239,6 +242,8 @@ export default function AppShell() {
                 );
             case 'assistant':
                 return <AssistantView />;
+            case 'extract':
+                return <ExtractView />;
             default:
                 return null;
         }
