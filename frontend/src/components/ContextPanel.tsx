@@ -1,4 +1,12 @@
-import { ChevronDown, Folder, X, FileText, Check } from 'lucide-react';
+import {
+    ChevronDown,
+    Folder,
+    X,
+    FileText,
+    Check,
+    Globe,
+    File,
+} from 'lucide-react';
 import { useState } from 'react';
 import type { PipelineStatus } from './AppShell';
 
@@ -16,6 +24,13 @@ const PIPELINE_STAGES = [
     { key: 'scored' as const, label: 'Scored' },
 ];
 
+/* Placeholder items when panels are empty — gives "content scaffolding" */
+const PLACEHOLDER_FILES = [
+    { name: 'project-notes.md', status: 'indexed' },
+    { name: 'meeting-summary.pdf', status: 'pending' },
+    { name: 'budget-2024.xlsx', status: 'tagged' },
+];
+
 export default function ContextPanel({
     pipeline,
     rootFolders,
@@ -31,9 +46,13 @@ export default function ContextPanel({
         return parts[parts.length - 1] || p;
     };
 
+    const hasRealContent = rootFolders.length > 0;
+    const displayFiles = recentFiles.length > 0 ? recentFiles : [];
+    const showPlaceholders = !hasRealContent;
+
     return (
         <aside className="context-panel">
-            {/* Progress — Cowork-style circles */}
+            {/* ── Progress ── */}
             <div className="panel-card">
                 <button
                     className="panel-card-header"
@@ -41,33 +60,27 @@ export default function ContextPanel({
                 >
                     <span className="panel-card-title">Progress</span>
                     <ChevronDown
-                        size={14}
-                        style={{
-                            color: 'var(--text-tertiary)',
-                            transform: progressOpen ? 'rotate(0deg)' : 'rotate(-90deg)',
-                            transition: 'transform var(--ease-fast)',
-                        }}
+                        size={13}
+                        className={`panel-card-chevron ${!progressOpen ? 'collapsed' : ''}`}
                     />
                 </button>
                 {progressOpen && (
                     <div className="panel-card-body">
-                        {/* Horizontal circles (like Cowork's progress circles) */}
+                        {/* Horizontal step circles */}
                         <div className="progress-steps">
-                            {PIPELINE_STAGES.map(({ key, label }, i) => {
+                            {PIPELINE_STAGES.map(({ key }, i) => {
                                 const count = pipeline[key];
                                 const isDone = count > 0 && count >= pipeline.total;
                                 const isActive = count > 0 && count < pipeline.total;
-
                                 return (
-                                    <span key={key} style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
+                                    <span key={key} style={{ display: 'contents' }}>
                                         {i > 0 && (
                                             <span className={`progress-step-line ${isDone ? 'done' : ''}`} />
                                         )}
                                         <span
                                             className={`progress-step-circle ${isDone ? 'done' : isActive ? 'active' : ''}`}
-                                            title={`${label}: ${count > 0 ? count : '—'}`}
                                         >
-                                            {isDone && <Check size={14} />}
+                                            {isDone && <Check size={12} />}
                                         </span>
                                     </span>
                                 );
@@ -82,7 +95,7 @@ export default function ContextPanel({
                 )}
             </div>
 
-            {/* Context — selected folders */}
+            {/* ── Artifacts ── */}
             <div className="panel-card">
                 <button
                     className="panel-card-header"
@@ -94,48 +107,51 @@ export default function ContextPanel({
                             <span className="panel-card-count">{rootFolders.length}</span>
                         )}
                         <ChevronDown
-                            size={14}
-                            style={{
-                                color: 'var(--text-tertiary)',
-                                transform: contextOpen ? 'rotate(0deg)' : 'rotate(-90deg)',
-                                transition: 'transform var(--ease-fast)',
-                            }}
+                            size={13}
+                            className={`panel-card-chevron ${!contextOpen ? 'collapsed' : ''}`}
                         />
                     </div>
                 </button>
                 {contextOpen && (
                     <div className="panel-card-body">
-                        {rootFolders.length === 0 ? (
-                            <div style={{ fontSize: 'var(--text-muted)', color: 'var(--text-tertiary)', padding: 'var(--sp-1) 0' }}>
-                                No folders selected
-                            </div>
-                        ) : (
-                            <>
-                                <div style={{ fontSize: 'var(--text-muted)', color: 'var(--text-tertiary)', marginBottom: 'var(--sp-2)' }}>
-                                    Selected folders
+                        {/* Selected folders sub-section */}
+                        <div className="panel-section-label">
+                            <span>Selected folders</span>
+                        </div>
+                        {rootFolders.length > 0 ? (
+                            rootFolders.map((folder) => (
+                                <div className="folder-item" key={folder}>
+                                    <Folder size={13} className="folder-item-icon" />
+                                    <span className="folder-item-path" title={folder}>
+                                        {folderName(folder)}
+                                    </span>
+                                    <button
+                                        className="folder-item-remove"
+                                        onClick={() => onRemoveFolder(folder)}
+                                        title="Remove folder"
+                                    >
+                                        <X size={11} />
+                                    </button>
                                 </div>
-                                {rootFolders.map((folder) => (
-                                    <div className="folder-item" key={folder}>
-                                        <Folder size={14} className="folder-item-icon" />
-                                        <span className="folder-item-path" title={folder}>
-                                            {folderName(folder)}
-                                        </span>
-                                        <button
-                                            className="folder-item-remove"
-                                            onClick={() => onRemoveFolder(folder)}
-                                            title="Remove folder"
-                                        >
-                                            <X size={12} />
-                                        </button>
-                                    </div>
-                                ))}
-                            </>
+                            ))
+                        ) : (
+                            <div className="panel-row" style={{ opacity: 0.5 }}>
+                                <Folder size={13} className="panel-row-icon" />
+                                <span className="panel-row-text">No folders selected</span>
+                            </div>
                         )}
+
+                        {/* Connectors sub-section */}
+                        <div className="panel-section-label">Connectors</div>
+                        <div className="panel-row">
+                            <Globe size={13} className="panel-row-icon" />
+                            <span className="panel-row-text">Local file system</span>
+                        </div>
                     </div>
                 )}
             </div>
 
-            {/* Working Files */}
+            {/* ── Working files ── */}
             <div className="panel-card">
                 <button
                     className="panel-card-header"
@@ -143,37 +159,35 @@ export default function ContextPanel({
                 >
                     <span className="panel-card-title">Working files</span>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
-                        {recentFiles.length > 0 && (
-                            <span className="panel-card-count">{recentFiles.length}</span>
+                        {(displayFiles.length > 0 || showPlaceholders) && (
+                            <span className="panel-card-count">
+                                {displayFiles.length || PLACEHOLDER_FILES.length}
+                            </span>
                         )}
                         <ChevronDown
-                            size={14}
-                            style={{
-                                color: 'var(--text-tertiary)',
-                                transform: filesOpen ? 'rotate(0deg)' : 'rotate(-90deg)',
-                                transition: 'transform var(--ease-fast)',
-                            }}
+                            size={13}
+                            className={`panel-card-chevron ${!filesOpen ? 'collapsed' : ''}`}
                         />
                     </div>
                 </button>
                 {filesOpen && (
                     <div className="panel-card-body">
-                        {recentFiles.length === 0 ? (
-                            <div style={{ fontSize: 'var(--text-muted)', color: 'var(--text-tertiary)', padding: 'var(--sp-1) 0' }}>
-                                No files yet
-                            </div>
-                        ) : (
-                            recentFiles.map((file) => (
-                                <div className="file-item" key={file.path} style={{ padding: 'var(--sp-1) 0' }}>
-                                    <FileText size={14} className="file-item-icon" />
-                                    <div className="file-item-info">
-                                        <div className="file-item-name" title={file.path}>
-                                            {file.name}
-                                        </div>
-                                    </div>
+                        {displayFiles.length > 0
+                            ? displayFiles.slice(0, 10).map((file) => (
+                                <div className="panel-row" key={file.path}>
+                                    <File size={13} className="panel-row-icon" />
+                                    <span className="panel-row-text" title={file.path}>
+                                        {file.name}
+                                    </span>
                                 </div>
                             ))
-                        )}
+                            : PLACEHOLDER_FILES.map((f) => (
+                                <div className="panel-row" key={f.name} style={{ opacity: 0.45 }}>
+                                    <FileText size={13} className="panel-row-icon" />
+                                    <span className="panel-row-text">{f.name}</span>
+                                    <span className="chip">{f.status}</span>
+                                </div>
+                            ))}
                     </div>
                 )}
             </div>

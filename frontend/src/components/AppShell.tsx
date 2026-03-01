@@ -255,7 +255,9 @@ export default function AppShell() {
                 </div>
 
                 <div className="main-content">
-                    {renderView()}
+                    <div className="main-content-inner">
+                        {renderView()}
+                    </div>
                 </div>
 
                 <div className="main-status">

@@ -5,6 +5,7 @@ import {
     Brain,
     MessageSquare,
     PlusCircle,
+    FileText,
 } from 'lucide-react';
 import type { ViewId } from './AppShell';
 
@@ -23,7 +24,6 @@ const NAV_ITEMS: { id: ViewId; icon: typeof FolderSearch; label: string }[] = [
     { id: 'assistant', icon: MessageSquare, label: 'Assistant' },
 ];
 
-/** Map each view to its "tab" category */
 const viewToTab = (view: ViewId): TabId => {
     if (view === 'assistant') return 'assistant';
     if (view === 'memory') return 'search';
@@ -36,14 +36,18 @@ const tabViews: Record<TabId, ViewId[]> = {
     assistant: ['assistant'],
 };
 
+/* Dummy session tasks — purposeful scaffolding */
+const SESSION_TASKS = [
+    { label: 'Scan Documents', active: true },
+    { label: 'Analyze Downloads', active: false },
+    { label: 'Review Suggestions', active: false },
+];
+
 export default function Sidebar({ activeView, onViewChange }: SidebarProps) {
     const activeTab = viewToTab(activeView);
 
     const handleTabClick = (tab: TabId) => {
-        // Switch to first view in that tab category
-        if (tabViews[tab][0]) {
-            onViewChange(tabViews[tab][0]);
-        }
+        if (tabViews[tab][0]) onViewChange(tabViews[tab][0]);
     };
 
     const visibleItems = NAV_ITEMS.filter((item) =>
@@ -52,7 +56,7 @@ export default function Sidebar({ activeView, onViewChange }: SidebarProps) {
 
     return (
         <nav className="sidebar">
-            {/* Segmented tabs (Claude-style Chat/Code/Cowork) */}
+            {/* Segmented tabs */}
             <div className="sidebar-header">
                 <div className="sidebar-tabs">
                     <button
@@ -76,7 +80,28 @@ export default function Sidebar({ activeView, onViewChange }: SidebarProps) {
                 </div>
             </div>
 
+            {/* "New task" action */}
+            <button className="sidebar-new-task" onClick={() => onViewChange('scan')}>
+                <PlusCircle size={16} className="sidebar-new-task-icon" />
+                <span>New task</span>
+            </button>
+
+            {/* Current session tasks */}
+            <div className="sidebar-section-label">Session</div>
+            {SESSION_TASKS.map((task) => (
+                <div
+                    key={task.label}
+                    className={`sidebar-task-item ${task.active ? 'active' : ''}`}
+                >
+                    <FileText size={14} className="sidebar-task-icon" />
+                    <span className="sidebar-task-label">{task.label}</span>
+                </div>
+            ))}
+
+            <div className="sidebar-divider" />
+
             {/* Navigation items for current tab */}
+            <div className="sidebar-section-label">Views</div>
             <div className="sidebar-nav">
                 {visibleItems.map(({ id, icon: Icon, label }) => (
                     <button
@@ -84,14 +109,14 @@ export default function Sidebar({ activeView, onViewChange }: SidebarProps) {
                         className={`sidebar-item ${activeView === id ? 'active' : ''}`}
                         onClick={() => onViewChange(id)}
                     >
-                        <Icon size={16} className="sidebar-item-icon" />
+                        <Icon size={15} className="sidebar-item-icon" />
                         <span className="sidebar-item-label">{label}</span>
                     </button>
                 ))}
             </div>
 
             <div className="sidebar-footer">
-                Wisp runs locally on your machine
+                These tasks run locally and aren't synced across devices
             </div>
         </nav>
     );
