@@ -1,4 +1,4 @@
-import { ChevronDown, Folder, X, FileText } from 'lucide-react';
+import { ChevronDown, Folder, X, FileText, Check } from 'lucide-react';
 import { useState } from 'react';
 import type { PipelineStatus } from './AppShell';
 
@@ -33,121 +33,133 @@ export default function ContextPanel({
 
     return (
         <aside className="context-panel">
-            {/* Progress section */}
-            <div className="context-section">
+            {/* Progress — Cowork-style circles */}
+            <div className="panel-card">
                 <button
-                    className="context-section-header"
+                    className="panel-card-header"
                     onClick={() => setProgressOpen((v) => !v)}
                 >
-                    <span className="context-section-title">Progress</span>
+                    <span className="panel-card-title">Progress</span>
                     <ChevronDown
                         size={14}
                         style={{
                             color: 'var(--text-tertiary)',
                             transform: progressOpen ? 'rotate(0deg)' : 'rotate(-90deg)',
-                            transition: 'transform 150ms ease',
+                            transition: 'transform var(--ease-fast)',
                         }}
                     />
                 </button>
                 {progressOpen && (
-                    <div className="context-section-body">
+                    <div className="panel-card-body">
+                        {/* Horizontal circles (like Cowork's progress circles) */}
                         <div className="progress-steps">
-                            {PIPELINE_STAGES.map(({ key, label }) => {
+                            {PIPELINE_STAGES.map(({ key, label }, i) => {
                                 const count = pipeline[key];
                                 const isDone = count > 0 && count >= pipeline.total;
                                 const isActive = count > 0 && count < pipeline.total;
 
                                 return (
-                                    <div className="progress-step" key={key}>
-                                        <div
-                                            className={`progress-step-dot ${isDone ? 'done' : isActive ? 'active' : ''
-                                                }`}
-                                        />
-                                        <span className="progress-step-label">{label}</span>
-                                        <span className="progress-step-count">
-                                            {count > 0 ? count.toLocaleString() : '—'}
+                                    <span key={key} style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
+                                        {i > 0 && (
+                                            <span className={`progress-step-line ${isDone ? 'done' : ''}`} />
+                                        )}
+                                        <span
+                                            className={`progress-step-circle ${isDone ? 'done' : isActive ? 'active' : ''}`}
+                                            title={`${label}: ${count > 0 ? count : '—'}`}
+                                        >
+                                            {isDone && <Check size={14} />}
                                         </span>
-                                    </div>
+                                    </span>
                                 );
                             })}
+                        </div>
+                        <div className="progress-label">
+                            {pipeline.total > 0
+                                ? `${pipeline.indexed} indexed · ${pipeline.embedded} embedded`
+                                : 'Steps will show as the task unfolds.'}
                         </div>
                     </div>
                 )}
             </div>
 
-            {/* Context section */}
-            <div className="context-section">
+            {/* Context — selected folders */}
+            <div className="panel-card">
                 <button
-                    className="context-section-header"
+                    className="panel-card-header"
                     onClick={() => setContextOpen((v) => !v)}
                 >
-                    <span className="context-section-title">Context</span>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span className="panel-card-title">Context</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
                         {rootFolders.length > 0 && (
-                            <span className="context-section-count">{rootFolders.length}</span>
+                            <span className="panel-card-count">{rootFolders.length}</span>
                         )}
                         <ChevronDown
                             size={14}
                             style={{
                                 color: 'var(--text-tertiary)',
                                 transform: contextOpen ? 'rotate(0deg)' : 'rotate(-90deg)',
-                                transition: 'transform 150ms ease',
+                                transition: 'transform var(--ease-fast)',
                             }}
                         />
                     </div>
                 </button>
                 {contextOpen && (
-                    <div className="context-section-body">
+                    <div className="panel-card-body">
                         {rootFolders.length === 0 ? (
-                            <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-tertiary)', padding: 'var(--sp-1) 0' }}>
+                            <div style={{ fontSize: 'var(--text-muted)', color: 'var(--text-tertiary)', padding: 'var(--sp-1) 0' }}>
                                 No folders selected
                             </div>
                         ) : (
-                            rootFolders.map((folder) => (
-                                <div className="folder-item" key={folder}>
-                                    <Folder size={14} className="folder-item-icon" />
-                                    <span className="folder-item-path" title={folder}>
-                                        {folderName(folder)}
-                                    </span>
-                                    <button
-                                        className="folder-item-remove"
-                                        onClick={() => onRemoveFolder(folder)}
-                                        title="Remove folder"
-                                    >
-                                        <X size={12} />
-                                    </button>
+                            <>
+                                <div style={{ fontSize: 'var(--text-muted)', color: 'var(--text-tertiary)', marginBottom: 'var(--sp-2)' }}>
+                                    Selected folders
                                 </div>
-                            ))
+                                {rootFolders.map((folder) => (
+                                    <div className="folder-item" key={folder}>
+                                        <Folder size={14} className="folder-item-icon" />
+                                        <span className="folder-item-path" title={folder}>
+                                            {folderName(folder)}
+                                        </span>
+                                        <button
+                                            className="folder-item-remove"
+                                            onClick={() => onRemoveFolder(folder)}
+                                            title="Remove folder"
+                                        >
+                                            <X size={12} />
+                                        </button>
+                                    </div>
+                                ))}
+                            </>
                         )}
                     </div>
                 )}
             </div>
 
-            {/* Working Files section */}
-            <div className="context-section">
+            {/* Working Files */}
+            <div className="panel-card">
                 <button
-                    className="context-section-header"
+                    className="panel-card-header"
                     onClick={() => setFilesOpen((v) => !v)}
                 >
-                    <span className="context-section-title">Working Files</span>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span className="panel-card-title">Working files</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
                         {recentFiles.length > 0 && (
-                            <span className="context-section-count">{recentFiles.length}</span>
+                            <span className="panel-card-count">{recentFiles.length}</span>
                         )}
                         <ChevronDown
                             size={14}
                             style={{
                                 color: 'var(--text-tertiary)',
                                 transform: filesOpen ? 'rotate(0deg)' : 'rotate(-90deg)',
-                                transition: 'transform 150ms ease',
+                                transition: 'transform var(--ease-fast)',
                             }}
                         />
                     </div>
                 </button>
                 {filesOpen && (
-                    <div className="context-section-body">
+                    <div className="panel-card-body">
                         {recentFiles.length === 0 ? (
-                            <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-tertiary)', padding: 'var(--sp-1) 0' }}>
+                            <div style={{ fontSize: 'var(--text-muted)', color: 'var(--text-tertiary)', padding: 'var(--sp-1) 0' }}>
                                 No files yet
                             </div>
                         ) : (

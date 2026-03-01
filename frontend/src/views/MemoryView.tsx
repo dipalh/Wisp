@@ -43,7 +43,6 @@ export default function MemoryView({
 
     return (
         <div className="memory-container">
-            {/* Search bar */}
             <div className="memory-search-bar">
                 <Search size={18} className="memory-search-icon" />
                 <input
@@ -55,31 +54,24 @@ export default function MemoryView({
                 />
             </div>
 
-            {/* Generate tags prompt if none */}
             {taggedFiles.length === 0 && (
-                <div className="empty-state" style={{ paddingTop: 'var(--sp-10)' }}>
+                <div className="empty-state">
                     <Tag size={36} className="empty-state-icon" />
                     <h3 className="empty-state-title">No tags generated yet</h3>
                     <p className="empty-state-desc">
                         Generate tags to search your files by meaning, not just filenames.
                     </p>
-                    <button
-                        className="btn btn-primary"
-                        onClick={onTagFiles}
-                        disabled={!!busy}
-                        style={{ marginTop: 'var(--sp-5)' }}
-                    >
+                    <button className="btn btn-primary" onClick={onTagFiles} disabled={!!busy} style={{ marginTop: 'var(--sp-4)' }}>
                         <Tag size={16} />
                         Generate tags
                     </button>
                 </div>
             )}
 
-            {/* Results */}
             {taggedFiles.length > 0 && (
                 <div className="memory-results">
                     {results.length === 0 && query.trim() && (
-                        <div className="empty-state" style={{ padding: 'var(--sp-10)' }}>
+                        <div className="empty-state">
                             <p className="empty-state-desc">No files match "{query}"</p>
                         </div>
                     )}
@@ -102,7 +94,7 @@ export default function MemoryView({
                         </div>
                     ))}
                     {results.length > 0 && (
-                        <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-tertiary)', textAlign: 'center', padding: 'var(--sp-3)' }}>
+                        <div style={{ fontSize: 'var(--text-muted)', color: 'var(--text-tertiary)', textAlign: 'center', padding: 'var(--sp-3)' }}>
                             Showing {results.length} of {taggedFiles.length} files
                         </div>
                     )}

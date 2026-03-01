@@ -33,7 +33,6 @@ export default function CleanView({
     const current = suggestions[swipeIndex] ?? null;
     const isDone = suggestions.length > 0 && swipeIndex >= suggestions.length;
 
-    // No root folder selected
     if (!hasRoot) {
         return (
             <div className="clean-container">
@@ -48,7 +47,6 @@ export default function CleanView({
         );
     }
 
-    // No suggestions yet
     if (suggestions.length === 0) {
         return (
             <div className="clean-container">
@@ -59,10 +57,9 @@ export default function CleanView({
                         Find cleanup candidates in your indexed folders.
                     </p>
                     <button
-                        className="btn btn-primary btn-lg"
+                        className="btn btn-primary"
                         onClick={onFindSuggestions}
                         disabled={!!busy}
-                        style={{ marginTop: 'var(--sp-4)' }}
                     >
                         <Trash2 size={18} />
                         Find deletables
@@ -72,22 +69,16 @@ export default function CleanView({
         );
     }
 
-    // All reviewed
     if (isDone) {
         return (
             <div className="clean-container">
                 <div className="clean-empty">
-                    <Shield size={40} style={{ color: 'var(--success)', marginBottom: 'var(--sp-4)' }} />
+                    <Shield size={40} style={{ color: 'var(--success)' }} className="clean-empty-icon" />
                     <h3 className="clean-empty-title">All done!</h3>
                     <p className="clean-empty-desc">
                         You've reviewed all {suggestions.length} suggestions.
                     </p>
-                    <button
-                        className="btn btn-secondary"
-                        onClick={onFindSuggestions}
-                        disabled={!!busy}
-                        style={{ marginTop: 'var(--sp-4)' }}
-                    >
+                    <button className="btn btn-secondary" onClick={onFindSuggestions} disabled={!!busy}>
                         Find more
                     </button>
                 </div>
@@ -95,10 +86,8 @@ export default function CleanView({
         );
     }
 
-    // Active card
     return (
         <div className="clean-container">
-            {/* Progress */}
             <div className="clean-progress-top">
                 <div className="clean-progress-bar">
                     <div
@@ -111,7 +100,6 @@ export default function CleanView({
                 </span>
             </div>
 
-            {/* Card */}
             {current && (
                 <div className="clean-card">
                     <span className="clean-card-badge">{current.type}</span>
@@ -128,7 +116,6 @@ export default function CleanView({
                 </div>
             )}
 
-            {/* Actions */}
             <div className="clean-actions">
                 <button className="clean-btn clean-btn-keep" onClick={() => onSwipe('keep')}>
                     <Shield size={18} />
@@ -140,9 +127,7 @@ export default function CleanView({
                 </button>
             </div>
 
-            <div className="clean-hint">
-                Use ← to keep · → to quarantine
-            </div>
+            <div className="clean-hint">Use ← to keep · → to quarantine</div>
         </div>
     );
 }

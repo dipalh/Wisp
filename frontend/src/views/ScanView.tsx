@@ -56,74 +56,38 @@ export default function ScanView({
         <div>
             {/* Action grid */}
             <div className="scan-grid">
-                <button
-                    className="scan-action-card"
-                    onClick={onAddFolder}
-                    disabled={!!busy}
-                >
-                    <div className="scan-action-icon">
-                        <FolderPlus size={18} />
-                    </div>
+                <button className="scan-action-card" onClick={onAddFolder} disabled={!!busy}>
+                    <div className="scan-action-icon"><FolderPlus size={18} /></div>
                     <span className="scan-action-title">Add folder</span>
                     <span className="scan-action-desc">Index another directory</span>
                 </button>
 
-                <button
-                    className="scan-action-card"
-                    onClick={() => onScan(rootFolders[0])}
-                    disabled={!!busy}
-                >
-                    <div className="scan-action-icon">
-                        <RefreshCw size={18} />
-                    </div>
+                <button className="scan-action-card" onClick={() => onScan(rootFolders[0])} disabled={!!busy}>
+                    <div className="scan-action-icon"><RefreshCw size={18} /></div>
                     <span className="scan-action-title">Rescan</span>
                     <span className="scan-action-desc">Refresh the file index</span>
                 </button>
 
-                <button
-                    className="scan-action-card"
-                    onClick={onOrganize}
-                    disabled={!!busy}
-                >
-                    <div className="scan-action-icon">
-                        <Wand2 size={18} />
-                    </div>
+                <button className="scan-action-card" onClick={onOrganize} disabled={!!busy}>
+                    <div className="scan-action-icon"><Wand2 size={18} /></div>
                     <span className="scan-action-title">Organize</span>
                     <span className="scan-action-desc">Sort files by category</span>
                 </button>
 
-                <button
-                    className="scan-action-card"
-                    onClick={onSuggestDelete}
-                    disabled={!!busy}
-                >
-                    <div className="scan-action-icon">
-                        <Trash2 size={18} />
-                    </div>
+                <button className="scan-action-card" onClick={onSuggestDelete} disabled={!!busy}>
+                    <div className="scan-action-icon"><Trash2 size={18} /></div>
                     <span className="scan-action-title">Find deletables</span>
                     <span className="scan-action-desc">Identify cleanup candidates</span>
                 </button>
 
-                <button
-                    className="scan-action-card"
-                    onClick={() => onTagFiles('local')}
-                    disabled={!!busy}
-                >
-                    <div className="scan-action-icon">
-                        <Tags size={18} />
-                    </div>
+                <button className="scan-action-card" onClick={() => onTagFiles('local')} disabled={!!busy}>
+                    <div className="scan-action-icon"><Tags size={18} /></div>
                     <span className="scan-action-title">Generate tags</span>
                     <span className="scan-action-desc">Auto-tag files locally</span>
                 </button>
 
-                <button
-                    className="scan-action-card"
-                    onClick={() => onTagFiles('api')}
-                    disabled={!!busy}
-                >
-                    <div className="scan-action-icon">
-                        <Tags size={18} />
-                    </div>
+                <button className="scan-action-card" onClick={() => onTagFiles('api')} disabled={!!busy}>
+                    <div className="scan-action-icon"><Tags size={18} /></div>
                     <span className="scan-action-title">AI tags</span>
                     <span className="scan-action-desc">Use AI for richer tags</span>
                 </button>
@@ -132,9 +96,7 @@ export default function ScanView({
             {/* Pipeline status */}
             {pipeline.indexed > 0 && (
                 <div className="scan-progress-section">
-                    <h3 style={{ fontSize: 'var(--text-md)', fontWeight: 600, marginBottom: 'var(--sp-3)' }}>
-                        Pipeline
-                    </h3>
+                    <h3 className="scan-file-list-title">Pipeline</h3>
                     <div className="card" style={{ display: 'flex', gap: 'var(--sp-6)' }}>
                         {[
                             { label: 'Indexed', value: pipeline.indexed },
@@ -143,10 +105,10 @@ export default function ScanView({
                             { label: 'Scored', value: pipeline.scored },
                         ].map((stage) => (
                             <div key={stage.label} style={{ flex: 1 }}>
-                                <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', marginBottom: 'var(--sp-1)' }}>
+                                <div style={{ fontSize: 'var(--text-muted)', color: 'var(--text-tertiary)', marginBottom: 'var(--sp-1)' }}>
                                     {stage.label}
                                 </div>
-                                <div style={{ fontSize: 'var(--text-xl)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+                                <div style={{ fontSize: 'var(--text-title)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
                                     {stage.value > 0 ? stage.value.toLocaleString() : '—'}
                                 </div>
                             </div>
@@ -157,7 +119,7 @@ export default function ScanView({
 
             {/* Tagged files summary */}
             {taggedFiles.length > 0 && (
-                <div className="scan-file-list" style={{ marginTop: 'var(--sp-6)' }}>
+                <div className="scan-file-list">
                     <div className="scan-file-list-header">
                         <span className="scan-file-list-title">
                             Tagged files ({taggedFiles.length})
@@ -182,7 +144,7 @@ export default function ScanView({
                             </div>
                         ))}
                         {taggedFiles.length > 12 && (
-                            <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-tertiary)', padding: 'var(--sp-2)' }}>
+                            <div style={{ fontSize: 'var(--text-muted)', color: 'var(--text-tertiary)', padding: 'var(--sp-2)' }}>
                                 and {taggedFiles.length - 12} more...
                             </div>
                         )}

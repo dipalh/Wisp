@@ -20,9 +20,9 @@ type TreeMapDatum = {
     fill?: string;
 };
 
-// Muted palette — amber-ish warm tones for folders, cool grays for files
-const folderColors = ['#B45309', '#A16207', '#854D0E', '#713F12'];
-const fileColors = ['#44403C', '#57534E', '#78716C', '#A8A29E'];
+/* Light-mode palette: soft blues for folders, warm grays for files */
+const folderColors = ['#5B9BD5', '#6DAAE0', '#7FB8EA', '#91C6F4'];
+const fileColors = ['#D6D3D1', '#C4C0BC', '#B0ACA8', '#9E9A96'];
 
 const formatBytes = (bytes: number): string => {
     if (!bytes) return '0 B';
@@ -111,7 +111,7 @@ export default function VisualizeView({
                         : 'Scan your folder to populate the treemap.'}
                 </p>
                 {rootFolders.length === 0 && (
-                    <button className="btn btn-primary" onClick={onAddFolder} style={{ marginTop: 'var(--sp-5)' }}>
+                    <button className="btn btn-primary" onClick={onAddFolder} style={{ marginTop: 'var(--sp-4)' }}>
                         <FolderPlus size={16} />
                         Add folder
                     </button>
@@ -124,7 +124,6 @@ export default function VisualizeView({
 
     return (
         <div>
-            {/* Breadcrumb + up button */}
             <div className="viz-header">
                 <div className="viz-breadcrumb">
                     {breadcrumbs.map((node, i) => (
@@ -140,18 +139,13 @@ export default function VisualizeView({
                     ))}
                 </div>
                 {parentPath && (
-                    <button
-                        className="btn btn-ghost"
-                        onClick={() => onNavigate(parentPath)}
-                        title="Go up"
-                    >
+                    <button className="btn btn-ghost" onClick={() => onNavigate(parentPath)} title="Go up">
                         <ArrowUpLeft size={16} />
                         Up
                     </button>
                 )}
             </div>
 
-            {/* Treemap */}
             {chartData.length > 0 ? (
                 <div className="viz-treemap">
                     <ResponsiveContainer width="100%" height="100%">
@@ -163,9 +157,7 @@ export default function VisualizeView({
                             fill="var(--text-disabled)"
                             isAnimationActive={false}
                             onClick={(node: TreeMapDatum) => {
-                                if (node?.type === 'folder' && node.path) {
-                                    onNavigate(node.path);
-                                }
+                                if (node?.type === 'folder' && node.path) onNavigate(node.path);
                             }}
                         >
                             <Tooltip
@@ -194,7 +186,6 @@ export default function VisualizeView({
                 </div>
             )}
 
-            {/* File table */}
             {currentNode?.children && currentNode.children.length > 0 && (
                 <div className="viz-file-table">
                     <table>
@@ -222,12 +213,8 @@ export default function VisualizeView({
                                                 {child.name}
                                             </div>
                                         </td>
-                                        <td className="file-size-cell" style={{ textAlign: 'right' }}>
-                                            {formatBytes(child.size)}
-                                        </td>
-                                        <td style={{ textAlign: 'right', color: 'var(--text-tertiary)' }}>
-                                            {child.type}
-                                        </td>
+                                        <td className="file-size-cell" style={{ textAlign: 'right' }}>{formatBytes(child.size)}</td>
+                                        <td style={{ textAlign: 'right', color: 'var(--text-tertiary)' }}>{child.type}</td>
                                     </tr>
                                 ))}
                         </tbody>
