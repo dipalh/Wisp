@@ -11,6 +11,7 @@ from api.v1.roots import router as roots_router
 from api.v1.scan import router as scan_router
 from api.v1.search import router as search_router
 from api.v1.tts import router as tts_router
+from api.v1.transcribe import router as transcribe_router
 from api.v1.debloat import router as debloat_router
 from api.v1.jobs import router as jobs_router
 import uvicorn
@@ -36,8 +37,9 @@ app.include_router(assistant_router, prefix="/api/v1/assistant", tags=["Assistan
 
 # Existing endpoints
 app.include_router(extract_router,  prefix="/api/v1/extract",  tags=["Extract"])
-app.include_router(ocr_router,      prefix="/api/v1/ocr",      tags=["OCR"])
-app.include_router(tts_router,      prefix="/api/v1/tts",      tags=["TTS"])
+app.include_router(ocr_router,         prefix="/api/v1/ocr",         tags=["OCR"])
+app.include_router(tts_router,         prefix="/api/v1/tts",         tags=["TTS"])
+app.include_router(transcribe_router,  prefix="/api/v1/transcribe",  tags=["Transcribe"])
 app.include_router(organize_router, prefix="/api/v1/organize",  tags=["Organize"])
 app.include_router(ingest_router,   prefix="/api/v1/ingest",    tags=["Ingest"])
 app.include_router(actions_router,  prefix="/api/v1/actions",   tags=["Actions"])
