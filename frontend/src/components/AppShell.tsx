@@ -6,11 +6,10 @@ import ScanView from '../views/ScanView';
 import CleanView from '../views/CleanView';
 import VisualizeView from '../views/VisualizeView';
 import MemoryView from '../views/MemoryView';
-import AssistantView from '../views/AssistantView';
 import ExtractView from '../views/ExtractView';
 import DebloatView from '../views/DebloatView';
 
-export type ViewId = 'scan' | 'clean' | 'visualize' | 'memory' | 'assistant' | 'extract' | 'debloat';
+export type ViewId = 'scan' | 'clean' | 'visualize' | 'memory' | 'extract' | 'debloat';
 
 export type TreeNode = {
     name: string;
@@ -46,11 +45,10 @@ export type PipelineStatus = {
 };
 
 const VIEW_TITLES: Record<ViewId, string> = {
-    scan: 'Scan',
-    clean: 'Clean',
+    scan: 'Scan & Index',
+    clean: 'Clean Up',
     visualize: 'Visualize',
     memory: 'Memory',
-    assistant: 'Assistant',
     extract: 'Extract',
     debloat: 'Debloat',
 };
@@ -59,10 +57,9 @@ const VIEW_SUBTITLES: Record<ViewId, string> = {
     scan: 'Index and analyze your files',
     clean: 'Review and clean up clutter',
     visualize: 'Explore storage usage',
-    memory: 'Search files by meaning',
-    assistant: 'AI-powered file assistant',
+    memory: 'AI-powered file memory',
     extract: 'Pull text from images and PDFs',
-    debloat: 'Optimize and debloat Windows',
+    debloat: 'Optimize and debloat',
 };
 
 export default function AppShell() {
@@ -265,8 +262,6 @@ export default function AppShell() {
                         onError={onError}
                     />
                 );
-            case 'assistant':
-                return <AssistantView />;
             case 'extract':
                 return <ExtractView />;
             case 'debloat':

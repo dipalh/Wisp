@@ -595,6 +595,20 @@ ipcMain.handle('file:open', async (_, filePath) => {
   return { ok: true };
 });
 
+ipcMain.handle('assistant:ask', async (_, query, k, autoDeepen) => {
+  const body = { query, k: k ?? 15, auto_deepen: autoDeepen ?? true };
+  const resp = await fetch(`${apiUrl}/api/v1/assistant`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const detail = await resp.text().catch(() => '');
+    throw new Error(`Assistant failed (HTTP ${resp.status}): ${detail}`);
+  }
+  return resp.json();
+});
+
 ipcMain.handle('memory:search', async (_, query, opts) => {
   const k = opts?.k ?? 10;
   const ext = opts?.ext ?? null;

@@ -51,58 +51,68 @@ async def _run_pipeline(job_id: str, all_files: list[Path]) -> int:
 
     total = len(all_files)
     indexed = 0
+    BATCH_SIZE = 4
+
+    async def _process_one(file_path: Path) -> bool:
+        """Ingest a single file. Returns True on success."""
+        filename = file_path.name
+        ext = file_path.suffix.lower()
+
+        try:
+            result = await pipeline.ingest_file(file_path)
+        except Exception as exc:
+            logger.warning("ingest_file failed for %s: %s", file_path, exc)
+            return False
+
+        is_del = False
+        try:
+            is_del = should_mark_deletable(file_path, ext, result.depth)
+        except Exception:
+            pass
+
+        os_tag_applied = False
+        try:
+            tag_write_ok = set_deletable(file_path, is_del)
+            if is_del and tag_write_ok:
+                os_tag_applied = True
+        except Exception:
+            pass
+
+        try:
+            upsert_indexed_file(
+                file_id=result.file_id,
+                job_id=job_id,
+                file_path=str(file_path),
+                name=filename,
+                ext=ext,
+                depth=result.depth,
+                chunk_count=result.chunk_count,
+                engine=result.engine,
+                is_deletable=is_del,
+                tagged_os=os_tag_applied,
+            )
+        except Exception as exc:
+            logger.warning("upsert_indexed_file failed for %s: %s", file_path, exc)
+
+        return True
 
     pipeline.init_store()
     try:
-        for i, file_path in enumerate(all_files):
-            filename = file_path.name
-            ext = file_path.suffix.lower()
+        for batch_start in range(0, total, BATCH_SIZE):
+            batch = all_files[batch_start:batch_start + BATCH_SIZE]
+            batch_names = ", ".join(f.name for f in batch)
+            update_progress(job_id, batch_start, total, f"Indexing: {batch_names}")
 
-            update_progress(job_id, i, total, f"Indexing: {filename}")
+            results = await asyncio.gather(
+                *[_process_one(fp) for fp in batch],
+                return_exceptions=True,
+            )
+            for ok in results:
+                if ok is True:
+                    indexed += 1
 
-            try:
-                result = await pipeline.ingest_file(file_path)
-            except Exception as exc:
-                logger.warning("ingest_file failed for %s: %s", file_path, exc)
-                continue
-
-            # is_deletable: heuristic decision (DB source of truth for UI/tinder).
-            is_del = False
-            try:
-                is_del = should_mark_deletable(file_path, ext, result.depth)
-            except Exception:
-                pass
-
-            # os_tag_applied: True only when we successfully wrote the
-            # "Deletable" OS tag.  When is_del is False we still call
-            # set_deletable(path, False) to clean up stale tags, but
-            # os_tag_applied stays False (we didn't *apply* a tag).
-            os_tag_applied = False
-            try:
-                tag_write_ok = set_deletable(file_path, is_del)
-                if is_del and tag_write_ok:
-                    os_tag_applied = True
-            except Exception:
-                pass
-
-            try:
-                upsert_indexed_file(
-                    file_id=result.file_id,
-                    job_id=job_id,
-                    file_path=str(file_path),
-                    name=filename,
-                    ext=ext,
-                    depth=result.depth,
-                    chunk_count=result.chunk_count,
-                    engine=result.engine,
-                    is_deletable=is_del,
-                    tagged_os=os_tag_applied,
-                )
-            except Exception as exc:
-                logger.warning("upsert_indexed_file failed for %s: %s", file_path, exc)
-
-            indexed += 1
-            update_progress(job_id, i + 1, total, f"Indexed: {filename}")
+            done = min(batch_start + len(batch), total)
+            update_progress(job_id, done, total, f"Indexed {done}/{total} files")
     finally:
         pipeline.teardown_store()
 

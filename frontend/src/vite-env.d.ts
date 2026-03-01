@@ -54,6 +54,14 @@ interface SearchResponse {
   total: number;
 }
 
+interface AssistantResponse {
+  answer: string;
+  proposals: any[];
+  query: string;
+  sources: string[];
+  deepened_files: string[];
+}
+
 interface WispApi {
   pickFolder: () => Promise<string | null>;
   scanFolder: (folderPath: string) => Promise<TreeNode | null>;
@@ -77,6 +85,7 @@ interface WispApi {
   }>;
   openFile: (filePath: string) => Promise<{ ok: boolean }>;
   searchMemory: (query: string, opts?: { k?: number; ext?: string }) => Promise<SearchResponse>;
+  askAssistant: (query: string, k?: number, autoDeepen?: boolean) => Promise<AssistantResponse>;
 }
 
 interface Window {
