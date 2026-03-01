@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Zap, Check, AlertCircle, Loader, Settings2, Copy, Download, ChevronDown } from 'lucide-react';
+import { Zap, Check, AlertCircle, Loader, Settings2, Copy, Download, ChevronDown, Apple } from 'lucide-react';
 
 type DebloatOption = {
     id: string;
@@ -31,16 +31,29 @@ type DebloatViewProps = {
     busy: string;
 };
 
+const isMac = typeof navigator !== 'undefined' &&
+    (navigator.userAgent.includes('Mac') || navigator.platform?.toLowerCase().startsWith('mac'));
+
+const MAC_OPTIMIZATIONS = [
+    { icon: '🧹', title: 'Cache Cleaner', desc: 'Remove system & app caches to free up disk space' },
+    { icon: '🔒', title: 'Privacy Hardening', desc: 'Disable telemetry, analytics & crash reporters' },
+    { icon: '⚡', title: 'Startup Items', desc: 'Disable unnecessary login items and launch agents' },
+    { icon: '🌐', title: 'DNS & Network', desc: 'Flush DNS cache and reset network settings' },
+    { icon: '💾', title: 'Memory Pressure', desc: 'Purge inactive RAM and optimize swap usage' },
+    { icon: '🎨', title: 'UI Animations', desc: 'Reduce motion and visual effects for snappier UI' },
+];
+
 export default function DebloatView({ busy }: DebloatViewProps) {
     const [options, setOptions] = useState<Record<string, DebloatOption[]>>({});
     const [selectedOptions, setSelectedOptions] = useState<Set<string>>(new Set());
     const [expandedOptions, setExpandedOptions] = useState<Set<string>>(new Set());
     const [environment, setEnvironment] = useState<'auto' | 'wsl' | 'powershell' | 'cmd'>('auto');
     const [currentTask, setCurrentTask] = useState<DebloatTask | null>(null);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(!isMac);
 
-    // Load available options on mount
+    // Load available options on mount — Windows only
     useEffect(() => {
+        if (isMac) return;
         const loadOptions = async () => {
             try {
                 const res = await fetch('http://localhost:8000/api/v1/debloat/options');
@@ -147,6 +160,37 @@ export default function DebloatView({ busy }: DebloatViewProps) {
             alert('Failed to start debloat task');
         }
     };
+
+    if (isMac) {
+        return (
+            <div className="debloat-container">
+                <div className="debloat-mac-placeholder">
+                    <div className="debloat-mac-hero">
+                        <Apple size={52} className="debloat-mac-icon" />
+                        <h2 className="debloat-mac-title">macOS Debloat</h2>
+                        <p className="debloat-mac-subtitle">
+                            Coming soon — full macOS optimizations are in development.
+                        </p>
+                    </div>
+                    <div className="debloat-mac-grid">
+                        {MAC_OPTIMIZATIONS.map((item) => (
+                            <div className="debloat-mac-card" key={item.title}>
+                                <span className="debloat-mac-card-icon">{item.icon}</span>
+                                <div>
+                                    <div className="debloat-mac-card-title">{item.title}</div>
+                                    <div className="debloat-mac-card-desc">{item.desc}</div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                    <div className="debloat-mac-footer">
+                        <span className="debloat-mac-badge">Windows Debloat available now</span>
+                        <p>Run Wisp on Windows to access full optimization features including privacy hardening, telemetry removal, and bloatware cleanup.</p>
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
     if (loading) {
         return (

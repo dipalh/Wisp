@@ -3,6 +3,7 @@ import Sidebar from './Sidebar';
 import ContextPanel from './ContextPanel';
 import ErrorBanner from './ErrorBanner';
 import ScanModal from './ScanModal';
+import OrganizeModal from './OrganizeModal';
 import ScanView from '../views/ScanView';
 import CleanView from '../views/CleanView';
 import VisualizeView from '../views/VisualizeView';
@@ -109,6 +110,7 @@ export default function AppShell() {
 
     // Organize result
     const [organizeResult, setOrganizeResult] = useState<{ moved: number; skipped: number; categories: Record<string, number> } | null>(null);
+    const [organizeModalOpen, setOrganizeModalOpen] = useState(false);
 
     // Scan modal
     const [scanModalOpen, setScanModalOpen] = useState(false);
@@ -273,29 +275,25 @@ export default function AppShell() {
         }
     };
 
-    const handleOrganize = async () => {
-        if (rootFolders.length === 0) return;
-        try {
-            setOrganizeResult(null);
-            setBusy('Organizing files...');
-            const result = await window.wispApi.organizeFolder(rootFolders[0]);
-            if (result.error) {
-                setBusy('');
-                onError(`Organize failed: ${result.error}`);
-                return;
-            }
-            setOrganizeResult({ moved: result.moved, skipped: result.skipped, categories: result.categories ?? {} });
-            if (rootFolders[0]) await handleScan(rootFolders[0]);
-            setBusy('');
-            const msg = result.moved > 0
-                ? `Organized ${result.moved} files into category folders`
+    /** Called by OrganizeModal — runs the actual work and returns the result. */
+    const runOrganize = async () => {
+        if (rootFolders.length === 0) throw new Error('No folder selected');
+        const result = await window.wispApi.organizeFolder(rootFolders[0]);
+        if (result.error) throw new Error(result.error);
+        const res = { moved: result.moved, skipped: result.skipped, categories: result.categories ?? {} };
+        setOrganizeResult(res);
+        // background post-processing
+        setTimeout(async () => {
+            try {
+                if (rootFolders[0]) await handleScan(rootFolders[0]);
+            } catch { /* ignore */ }
+            const msg = res.moved > 0
+                ? `Organized ${res.moved} files into category folders`
                 : 'No files needed organizing';
             setStatusText(msg);
-            logActivity('Folder organized', `${result.moved} moved, ${result.skipped} skipped`);
-        } catch (e: any) {
-            setBusy('');
-            onError(`Organize failed: ${e?.message ?? e}`);
-        }
+            logActivity('Folder organized', `${res.moved} moved, ${res.skipped} skipped`);
+        }, 0);
+        return res;
     };
 
     const handleTagFiles = async (provider: 'local' | 'api') => {
@@ -324,7 +322,7 @@ export default function AppShell() {
                     <ScanView
                         rootFolders={rootFolders}
                         onAddFolder={addFolder}
-                        onOrganize={handleOrganize}
+                        onOrganize={() => setOrganizeModalOpen(true)}
                         onSuggestDelete={handleSuggestDelete}
                         onTagFiles={handleTagFiles}
                         taggedFiles={taggedFiles}
@@ -368,7 +366,7 @@ export default function AppShell() {
                 return (
                     <OrganizeView
                         hasRoot={rootFolders.length > 0}
-                        onOrganize={handleOrganize}
+                        onOrganize={() => setOrganizeModalOpen(true)}
                         onAddFolder={addFolder}
                         busy={busy}
                         result={organizeResult}
@@ -435,6 +433,13 @@ export default function AppShell() {
                 onClose={() => setScanModalOpen(false)}
                 onError={onError}
                 onComplete={handleScanModalComplete}
+            />
+            <OrganizeModal
+                open={organizeModalOpen}
+                folder={rootFolders[0] ?? ''}
+                onClose={() => setOrganizeModalOpen(false)}
+                onError={onError}
+                onOrganize={runOrganize}
             />
         </div>
     );

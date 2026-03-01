@@ -8,7 +8,7 @@ type OrganizeResult = {
 
 type OrganizeViewProps = {
     hasRoot: boolean;
-    onOrganize: () => Promise<void>;
+    onOrganize: () => void;
     onAddFolder: () => void;
     busy: string;
     result: OrganizeResult | null;
