@@ -764,12 +764,16 @@ def _maybe_tag_deletable(
     depth: str,
     ai_summary: str = "",
 ) -> None:
-    """Fire-and-forget: evaluate and optionally apply the OS-level Deletable
-    tag.  Must NEVER raise or block ingestion."""
+    """Fire-and-forget: evaluate and apply/remove the OS-level Deletable tag.
+
+    Bidirectional — if a file was previously tagged but is now protected
+    (e.g. moved into Documents/), the tag is removed.  Must NEVER raise
+    or block ingestion.
+    """
     try:
         from services.os_tags.deletable import set_deletable, should_mark_deletable
-        if should_mark_deletable(file_path, ext, depth, ai_summary):
-            set_deletable(file_path, True)
+        deletable = should_mark_deletable(file_path, ext, depth, ai_summary)
+        set_deletable(file_path, deletable)
     except Exception:
         pass  # tagging must never block ingestion
 

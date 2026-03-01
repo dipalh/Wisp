@@ -57,25 +57,25 @@ function detectCategory(fileName) {
 
 function extractSemanticGroup(fileName, filePath = '') {
   const nameLower = fileName.toLowerCase();
-  
+
   // Check context first
   if (SEMANTIC_KEYWORDS.context.school.some(k => nameLower.includes(k))) return 'School';
   if (SEMANTIC_KEYWORDS.context.work.some(k => nameLower.includes(k))) return 'Work';
   if (SEMANTIC_KEYWORDS.context.media.some(k => nameLower.includes(k))) return 'Media';
   if (SEMANTIC_KEYWORDS.context.personal.some(k => nameLower.includes(k))) return 'Personal';
-  
+
   // Fallback to category
   return detectCategory(fileName);
 }
 
 function extractOrganizationSubfolder(filePath = '') {
   const name = path.basename(filePath).toLowerCase();
-  
+
   // Detect if deletable - higher threshold
   const { deletable, important } = classifyFileSeverity(name);
   if (deletable > 3) return 'Deletable';
   if (important > 3) return 'Important';
-  
+
   return 'Default';
 }
 
@@ -95,12 +95,12 @@ async function safeReadDir(dirPath) {
 async function buildTreeNode(targetPath, depth = 0, fileCounter = { count: 0 }) {
   const stat = await fs.stat(targetPath);
   let size = 0;
-  
+
   // For files, use actual file size
   if (!stat.isDirectory()) {
     size = stat.size;
   }
-  
+
   const baseNode = {
     name: path.basename(targetPath) || targetPath,
     path: targetPath,
@@ -200,36 +200,36 @@ function classifyFileSeverity(fileName, filePath = '') {
   const nameLower = fileName.toLowerCase();
   let deletableScore = 0;
   let importantScore = 0;
-  
+
   // Check for deletable patterns (high) - stronger weights
   SEMANTIC_KEYWORDS.deletable.high.forEach(keyword => {
     if (nameLower.includes(keyword)) deletableScore += 4;
   });
-  
+
   // Check for deletable patterns (medium)
   SEMANTIC_KEYWORDS.deletable.medium.forEach(keyword => {
     if (nameLower.includes(keyword)) deletableScore += 1;
   });
-  
+
   // Check for important patterns (high) - only HIGH priority items count
   SEMANTIC_KEYWORDS.important.high.forEach(keyword => {
     if (nameLower.includes(keyword)) importantScore += 4;
   });
-  
+
   // Don't count medium importance - too many false positives
-  
+
   // Prevent false positives: "notimportant" or random copies
   if (nameLower.includes('not') && nameLower.includes('important')) {
     importantScore = 0;
     deletableScore += 3;
   }
-  
+
   // Random empty text files are not important
   if (nameLower.match(/^(new|copy|document|untitled)/) && nameLower.endsWith('.txt')) {
     importantScore = 0;
     deletableScore += 2;
   }
-  
+
   return { deletable: deletableScore, important: importantScore };
 }
 
@@ -237,17 +237,17 @@ function localTagsFromName(fileName, filePath = '') {
   const ext = path.extname(fileName).toLowerCase().replace('.', '') || 'unknown';
   const base = path.basename(fileName, path.extname(fileName));
   const nameLower = fileName.toLowerCase();
-  
+
   // Extract meaningful words from filename
   const words = base
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter(w => w.length > 2 && w !== 'the' && w !== 'and' && w !== 'for')
     .slice(0, 5);
-  
+
   const category = detectCategory(fileName).toLowerCase();
   const severity = classifyFileSeverity(fileName, filePath);
-  
+
   // Add size-based tag if we have path info
   const sizeTag = [];
   if (filePath) {
@@ -255,20 +255,20 @@ function localTagsFromName(fileName, filePath = '') {
       const stat = fssync.statSync(filePath);
       if (stat.size > 100 * 1024 * 1024) sizeTag.push('large-file');
       else if (stat.size > 10 * 1024 * 1024) sizeTag.push('medium-file');
-    } catch {}
+    } catch { }
   }
-  
+
   // Add severity tags (use higher threshold to reduce false positives)
   const severityTags = [];
   if (severity.deletable > 3) severityTags.push('deletable');
   if (severity.important > 3) severityTags.push('important');
-  
+
   // Add context tags
   const contextTags = [];
   Object.entries(SEMANTIC_KEYWORDS.context).forEach(([context, keywords]) => {
     if (keywords.some(k => nameLower.includes(k))) contextTags.push(context);
   });
-  
+
   const tags = [...new Set([category, ext, ...severityTags, ...contextTags, ...sizeTag, ...words].filter(Boolean))].slice(0, 15);
   return tags;
 }
@@ -316,7 +316,7 @@ async function suggestDeleteCandidates(rootPath) {
     let score = 0;
     const ageMs = now - file.lastModified;
     const ageDays = Math.floor(ageMs / (24 * 60 * 60 * 1000));
-    
+
     if (shouldDelete(file.name)) score += 5;
     if (ageMs > staleMs) score += 3;
     if (file.size > 500 * 1024 * 1024) score += 3;
@@ -373,7 +373,7 @@ function createWindow() {
   const mainWindow = new BrowserWindow({
     width: 1400,
     height: 920,
-    backgroundColor: '#111827',
+    backgroundColor: '#F7F7F5',
     titleBarStyle: 'hiddenInset',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -477,7 +477,7 @@ ipcMain.handle('files:trash', async (_, targetPath) => {
         after_state: {},
         status: 'APPLIED',
       }),
-    }).catch(() => {}); // non-blocking; ignore if Python backend isn't running
+    }).catch(() => { }); // non-blocking; ignore if Python backend isn't running
 
     return { ok: true };
   } catch {
