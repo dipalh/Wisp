@@ -30,19 +30,27 @@ async def speak(text: str, voice_id: str = DEFAULT_VOICE_ID) -> bytes:
 
 
 async def list_voices() -> list[dict]:
-    """Return available ElevenLabs voices."""
+    """Return available ElevenLabs voices (English only)."""
     if not ELEVENLABS_API_KEY:
         return []
     def _get():
         client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
         resp = client.voices.get_all()
-        return [
-            {
+        voices = []
+        for v in resp.voices:
+            labels = getattr(v, "labels", {}) or {}
+            if not isinstance(labels, dict):
+                labels = {}
+            language = labels.get("language", "en")
+            if language != "en":
+                continue
+            voices.append({
                 "voice_id": v.voice_id,
                 "name": v.name,
                 "category": getattr(v, "category", None),
                 "preview_url": getattr(v, "preview_url", None),
-            }
-            for v in resp.voices
-        ]
+                "language": language,
+                "accent": labels.get("accent", ""),
+            })
+        return voices
     return await asyncio.to_thread(_get)

@@ -37,7 +37,7 @@ const BOTTOM_NAV_ITEMS: { id: ViewId; icon: typeof ShieldCheck; label: string }[
 function WispLogo() {
     return (
         <img
-            src="/Generated_Image_February_28_2026_-_9_34PM.webp"
+            src="/Generated_Image_February_28_2026_-_9_34PM.jpg"
             alt="Wisp"
             className="sidebar-brand-logo"
         />
@@ -64,7 +64,7 @@ export default function Sidebar({ activeView, onViewChange }: SidebarProps) {
 
             <div className="sidebar-brand">
                 <WispLogo />
-                <span className="sidebar-brand-wordmark">Wisp</span>
+                <span className="lolXD sidebar-brand-wordmark">isp</span>
             </div>
 
             {sections.map(section => (
