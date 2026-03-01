@@ -1,6 +1,4 @@
-import asyncio
 import logging
-import platform
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -22,10 +20,6 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-
-# Fix asyncio subprocess support on Windows
-if platform.system() == 'Windows':
-    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 app = FastAPI(title="Wisp API", version="1.0.0")
 

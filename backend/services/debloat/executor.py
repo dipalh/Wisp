@@ -59,6 +59,17 @@ class DebloatTask:
     progress: int = 0  # 0-100
 
 
+def _run_command_sync(cmd: str, timeout_seconds: int = 300) -> subprocess.CompletedProcess[str]:
+    """Run command synchronously (used as fallback when asyncio subprocess isn't available)."""
+    return subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        shell=True,
+        timeout=timeout_seconds,
+    )
+
+
 ALLOWED_SWITCHES = {
     "RemoveApps",
     "DisableTelemetry",
@@ -522,33 +533,57 @@ async def execute_debloat(
         cmd = _build_command(environment, params)
         logger.info(f"Executing command in {environment.value}: {cmd[:200]}...")  # Log first 200 chars
         
-        # Execute the command with timeout
-        proc = await asyncio.create_subprocess_shell(
-            cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            shell=True,
-        )
-        
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
-        except asyncio.TimeoutError:
-            proc.kill()
-            task.status = "failed"
-            task.error = "Debloat task timed out (exceeded 5 minutes)"
-            task.progress = 100
-            logger.error(f"Task {task.id} timed out")
-            return task
-        
-        task.output = stdout.decode(errors="ignore")
-        if stderr:
-            task.error = stderr.decode(errors="ignore")
-            logger.warning(f"Task {task.id} stderr: {task.error}")
-        
-        task.status = "completed" if proc.returncode == 0 else "failed"
+            # Preferred async path
+            proc = await asyncio.create_subprocess_shell(
+                cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                shell=True,
+            )
+
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
+            except asyncio.TimeoutError:
+                proc.kill()
+                task.status = "failed"
+                task.error = "Debloat task timed out (exceeded 5 minutes)"
+                task.progress = 100
+                logger.error(f"Task {task.id} timed out")
+                return task
+
+            task.output = stdout.decode(errors="ignore")
+            if stderr:
+                task.error = stderr.decode(errors="ignore")
+                logger.warning(f"Task {task.id} stderr: {task.error}")
+
+            return_code = proc.returncode
+        except NotImplementedError:
+            # Windows fallback for environments where asyncio subprocess transport
+            # is unavailable (e.g. SelectorEventLoop-based runtimes).
+            logger.warning(
+                f"Async subprocess unsupported in current event loop; using sync fallback for task {task.id}"
+            )
+            try:
+                completed = await asyncio.to_thread(_run_command_sync, cmd, 300)
+            except subprocess.TimeoutExpired:
+                task.status = "failed"
+                task.error = "Debloat task timed out (exceeded 5 minutes)"
+                task.progress = 100
+                logger.error(f"Task {task.id} timed out in sync fallback")
+                return task
+
+            task.output = (completed.stdout or "")
+            if completed.stderr:
+                task.error = completed.stderr
+                logger.warning(f"Task {task.id} stderr (fallback): {task.error}")
+
+            return_code = completed.returncode
+
+        task.status = "completed" if return_code == 0 else "failed"
         task.progress = 100
         
-        logger.info(f"Task {task.id} finished with status={task.status}, returncode={proc.returncode}")
+        logger.info(f"Task {task.id} finished with status={task.status}, returncode={return_code}")
         if task.output:
             logger.info(f"Task {task.id} stdout: {task.output[:500]}...")  # First 500 chars
         
