@@ -493,9 +493,26 @@ ipcMain.handle('file:readBase64', async (_, filePath) => {
 ipcMain.handle('file:pickForOcr', async () => {
   const result = await dialog.showOpenDialog({
     properties: ['openFile'],
-    filters: [{ name: 'Images & PDFs', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'tiff', 'pdf'] }],
+    filters: [
+      { name: 'All Supported', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'tiff', 'pdf', 'mp3', 'wav', 'm4a', 'ogg', 'flac', 'aac', 'mp4', 'mov', 'webm', 'mkv'] },
+      { name: 'Images & PDFs', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'tiff', 'pdf'] },
+      { name: 'Audio & Video', extensions: ['mp3', 'wav', 'm4a', 'ogg', 'flac', 'aac', 'mp4', 'mov', 'webm', 'mkv'] },
+    ],
   });
   return result.canceled ? null : result.filePaths[0];
+});
+
+ipcMain.handle('transcribe:file', async (_, filePath) => {
+  const bytes = await fs.readFile(filePath);
+  const blob = new Blob([bytes]);
+  const form = new FormData();
+  form.append('file', blob, path.basename(filePath));
+  const resp = await fetch(`${apiUrl}/api/v1/transcribe/`, { method: 'POST', body: form });
+  if (!resp.ok) {
+    const detail = await resp.text().catch(() => '');
+    throw new Error(`Transcription failed (HTTP ${resp.status}): ${detail}`);
+  }
+  return resp.json();
 });
 
 ipcMain.handle('ocr:extract', async (_, filePath) => {

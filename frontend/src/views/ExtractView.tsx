@@ -1,12 +1,11 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import {
     ScanText, Upload, Copy, Check, RotateCcw, AlertCircle,
-    ChevronLeft, ChevronRight, Scissors, FileImage,
+    ChevronLeft, ChevronRight, Scissors, FileImage, Mic,
 } from 'lucide-react';
 import * as pdfjsLib from 'pdfjs-dist';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 
-// Vite resolves this to the bundled worker file
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
     'pdfjs-dist/build/pdf.worker.min.mjs',
     import.meta.url,
@@ -15,25 +14,56 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type OcrResult = {
+    kind: 'ocr';
     text: string;
     word_count?: number;
     char_count?: number;
     confidence?: number;
 };
 
+type TranscriptSegment = { speaker: string; text: string };
+
+type TranscriptResult = {
+    kind: 'transcript';
+    text: string;
+    word_count: number;
+    char_count: number;
+    language: string;
+    language_probability: number;
+    speakers: number;
+    segments: TranscriptSegment[];
+};
+
+type AnyResult = OcrResult | TranscriptResult;
+
 type State = 'idle' | 'loading' | 'pdf-select' | 'done' | 'error';
 
 type Rect = { x: number; y: number; w: number; h: number };
 
+const AUDIO_VIDEO_EXTS = new Set([
+    'mp3', 'wav', 'm4a', 'ogg', 'flac', 'aac', 'opus',
+    'mp4', 'mov', 'webm', 'mkv',
+]);
+
+// Speaker colours — cycles if more than 5 speakers
+const SPEAKER_COLORS = [
+    'var(--accent)',
+    '#E07B54',
+    '#5BAD8A',
+    '#9B6DD1',
+    '#C4A020',
+];
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function ExtractView() {
-    const [state, setState]         = useState<State>('idle');
-    const [fileName, setFileName]   = useState('');
-    const [result, setResult]       = useState<OcrResult | null>(null);
-    const [errorMsg, setErrorMsg]   = useState('');
-    const [dragging, setDragging]   = useState(false);
-    const [copied, setCopied]       = useState(false);
+    const [state, setState]           = useState<State>('idle');
+    const [fileName, setFileName]     = useState('');
+    const [result, setResult]         = useState<AnyResult | null>(null);
+    const [errorMsg, setErrorMsg]     = useState('');
+    const [dragging, setDragging]     = useState(false);
+    const [copied, setCopied]         = useState(false);
+    const [loadingLabel, setLoadingLabel] = useState('Extracting text from');
 
     // PDF viewer state
     const [pdfDoc, setPdfDoc]           = useState<PDFDocumentProxy | null>(null);
@@ -55,7 +85,6 @@ export default function ExtractView() {
         const overlay = overlayCanvasRef.current;
         if (!main || !overlay) return;
 
-        // Fit to the container's current width (minus 2px for the border)
         const containerW = (canvasWrapRef.current?.clientWidth ?? 700) - 2;
         const raw   = page.getViewport({ scale: 1 });
         const scale = containerW / raw.width;
@@ -84,10 +113,8 @@ export default function ExtractView() {
         const ctx = canvas.getContext('2d')!;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         if (sel.w > 4 && sel.h > 4) {
-            // Fill first (no dash needed)
             ctx.fillStyle = 'rgba(91,155,213,0.12)';
             ctx.fillRect(sel.x, sel.y, sel.w, sel.h);
-            // Draw border as a single continuous path so dashes are uniform
             ctx.beginPath();
             ctx.moveTo(sel.x, sel.y);
             ctx.lineTo(sel.x + sel.w, sel.y);
@@ -143,7 +170,6 @@ export default function ExtractView() {
         try {
             let data: ArrayBuffer;
             if (typeof source === 'string') {
-                // Renderer can't fetch file:// URLs — read via main process IPC
                 const b64: string = await (window as any).wispApi.readFileBase64(source);
                 const raw = atob(b64);
                 const bytes = new Uint8Array(raw.length);
@@ -164,15 +190,32 @@ export default function ExtractView() {
 
     const runOcr = useCallback(async (filePath: string, name: string) => {
         setFileName(name);
+        setLoadingLabel('Extracting text from');
         setState('loading');
         setResult(null);
         setErrorMsg('');
         try {
             const res = await (window as any).wispApi.extractText(filePath);
-            setResult(res);
+            setResult({ kind: 'ocr', ...res });
             setState('done');
         } catch (e: any) {
-            setErrorMsg(e?.message ?? 'Extraction failed. Check that the backend is running and Google Cloud Vision is configured.');
+            setErrorMsg(e?.message ?? 'Extraction failed. Check the backend is running and Google Cloud Vision is configured.');
+            setState('error');
+        }
+    }, []);
+
+    const runTranscribe = useCallback(async (filePath: string, name: string) => {
+        setFileName(name);
+        setLoadingLabel('Transcribing');
+        setState('loading');
+        setResult(null);
+        setErrorMsg('');
+        try {
+            const res = await (window as any).wispApi.transcribeFile(filePath);
+            setResult({ kind: 'transcript', ...res });
+            setState('done');
+        } catch (e: any) {
+            setErrorMsg(e?.message ?? 'Transcription failed. Check the backend is running and ELEVENLABS_API_KEY is configured.');
             setState('error');
         }
     }, []);
@@ -180,8 +223,9 @@ export default function ExtractView() {
     const handleFile = useCallback((fp: string, name: string, fileObj?: File) => {
         const ext = name.split('.').pop()?.toLowerCase() ?? '';
         if (ext === 'pdf') loadPdf(fileObj ?? fp, name);
+        else if (AUDIO_VIDEO_EXTS.has(ext)) runTranscribe(fp, name);
         else runOcr(fp, name);
-    }, [loadPdf, runOcr]);
+    }, [loadPdf, runOcr, runTranscribe]);
 
     const handleBrowse = async () => {
         const fp = await (window as any).wispApi.pickFileForOcr();
@@ -202,7 +246,7 @@ export default function ExtractView() {
         handleFile(fp, file.name, file);
     };
 
-    // ── Extract canvas region ──────────────────────────────────────────────────
+    // ── Extract canvas region (PDF OCR) ────────────────────────────────────────
 
     const extractRegion = (sel: Rect | null) => {
         const main = mainCanvasRef.current;
@@ -222,6 +266,7 @@ export default function ExtractView() {
         tmp.toBlob(async (blob) => {
             if (!blob) return;
             setState('loading');
+            setLoadingLabel('Extracting text from');
             setResult(null);
             setErrorMsg('');
             try {
@@ -234,7 +279,7 @@ export default function ExtractView() {
                 const b64  = btoa(chunks.join(''));
                 const name = `${fileName}_p${pageNum}.png`;
                 const res  = await (window as any).wispApi.extractTextFromBuffer(b64, name);
-                setResult(res);
+                setResult({ kind: 'ocr', ...res });
                 setState('done');
             } catch (e: any) {
                 setErrorMsg(e?.message ?? 'Extraction failed.');
@@ -246,8 +291,9 @@ export default function ExtractView() {
     // ── Copy / Reset ───────────────────────────────────────────────────────────
 
     const handleCopy = async () => {
-        if (!result?.text) return;
-        await navigator.clipboard.writeText(result.text);
+        const text = result?.text;
+        if (!text) return;
+        await navigator.clipboard.writeText(text);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
     };
@@ -283,7 +329,10 @@ export default function ExtractView() {
                     </div>
                     <p className="extract-dropzone-title">Drop a file here, or click to browse</p>
                     <p className="extract-dropzone-formats">
-                        PNG &middot; JPG &middot; WEBP &middot; BMP &middot; TIFF &middot; PDF (region select)
+                        PNG &middot; JPG &middot; WEBP &middot; TIFF &middot; PDF (region select)
+                    </p>
+                    <p className="extract-dropzone-formats" style={{ marginTop: 2 }}>
+                        MP3 &middot; WAV &middot; M4A &middot; MP4 &middot; MOV &middot; WEBM &middot; FLAC
                     </p>
                     <button
                         className="btn btn-primary"
@@ -306,7 +355,7 @@ export default function ExtractView() {
                 <div className="extract-loading">
                     <span className="status-dot busy" />
                     <span className="extract-loading-text">
-                        Extracting text from <strong>{fileName}</strong>&hellip;
+                        {loadingLabel} <strong>{fileName}</strong>&hellip;
                     </span>
                 </div>
             </div>
@@ -320,7 +369,7 @@ export default function ExtractView() {
             <div className="extract-container">
                 <div className="extract-error">
                     <AlertCircle size={32} className="extract-error-icon" />
-                    <p className="extract-error-title">Extraction failed</p>
+                    <p className="extract-error-title">Failed</p>
                     <p className="extract-error-desc">{errorMsg}</p>
                     <button className="btn btn-secondary" onClick={handleReset}>
                         <RotateCcw size={14} />
@@ -401,8 +450,70 @@ export default function ExtractView() {
 
     // ── Render: done ───────────────────────────────────────────────────────────
 
-    const wordCount = result?.word_count ?? result?.text?.trim().split(/\s+/).filter(Boolean).length ?? 0;
-    const charCount = result?.char_count ?? result?.text?.length ?? 0;
+    if (!result) return null;
+
+    const wordCount = result.word_count ?? (result.text?.trim().split(/\s+/).filter(Boolean).length ?? 0);
+    const charCount = result.char_count ?? (result.text?.length ?? 0);
+
+    // ── Transcript result ──────────────────────────────────────────────────────
+
+    if (result.kind === 'transcript') {
+        const speakerNames = [...new Set(result.segments.map(s => s.speaker))];
+        const speakerIndex = (id: string) => speakerNames.indexOf(id);
+        const speakerLabel = (id: string) => `Speaker ${speakerIndex(id) + 1}`;
+
+        return (
+            <div className="extract-container">
+                <div className="extract-result">
+                    <div className="extract-result-header">
+                        <Mic size={14} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                        <span className="extract-result-name">{fileName}</span>
+                        <span className="chip">{result.language.toUpperCase()}</span>
+                        <span className="chip">{wordCount.toLocaleString()} words</span>
+                        {result.speakers > 1 && (
+                            <span className="chip">{result.speakers} speakers</span>
+                        )}
+                        <button
+                            className="btn btn-secondary extract-result-copy"
+                            onClick={handleCopy}
+                            title="Copy full transcript"
+                        >
+                            {copied ? <Check size={13} /> : <Copy size={13} />}
+                            {copied ? 'Copied' : 'Copy'}
+                        </button>
+                    </div>
+                    <div className="extract-result-body">
+                        {result.segments.length > 0 ? (
+                            <div className="transcript-segments">
+                                {result.segments.map((seg, i) => (
+                                    <div key={i} className="transcript-segment">
+                                        {result.speakers > 1 && (
+                                            <span
+                                                className="transcript-speaker"
+                                                style={{ color: SPEAKER_COLORS[speakerIndex(seg.speaker) % SPEAKER_COLORS.length] }}
+                                            >
+                                                {speakerLabel(seg.speaker)}
+                                            </span>
+                                        )}
+                                        <p className="transcript-text">{seg.text}</p>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <p className="extract-empty-result">No speech detected in this file.</p>
+                        )}
+                    </div>
+                </div>
+
+                <button className="btn btn-secondary" onClick={handleReset}>
+                    <RotateCcw size={14} />
+                    Transcribe another file
+                </button>
+            </div>
+        );
+    }
+
+    // ── OCR result ─────────────────────────────────────────────────────────────
 
     return (
         <div className="extract-container">
@@ -412,7 +523,7 @@ export default function ExtractView() {
                     <span className="extract-result-name">{fileName}</span>
                     <span className="chip">{wordCount.toLocaleString()} words</span>
                     <span className="chip">{charCount.toLocaleString()} chars</span>
-                    {result?.confidence != null && (
+                    {result.confidence != null && (
                         <span className="chip">{Math.round(result.confidence * 100)}% conf.</span>
                     )}
                     <button
@@ -425,7 +536,7 @@ export default function ExtractView() {
                     </button>
                 </div>
                 <div className="extract-result-body">
-                    {result?.text?.trim() ? (
+                    {result.text?.trim() ? (
                         <pre className="extract-result-text">{result.text}</pre>
                     ) : (
                         <p className="extract-empty-result">No text found in this selection.</p>
