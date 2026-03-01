@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Volume2, ChevronDown, FileText, FolderOpen } from 'lucide-react';
+import { Send, Volume2, ChevronDown, FileText, FolderOpen, Square, Headphones } from 'lucide-react';
 
 type Message = {
     id: string;
@@ -131,7 +131,13 @@ export default function AssistantView() {
         () => localStorage.getItem(STORAGE_KEY) ?? DEFAULT_VOICE_ID
     );
     const [showVoicePanel, setShowVoicePanel] = useState(false);
+    const [speakingMsgId, setSpeakingMsgId] = useState<string | null>(null);
+    const [autoSpeak, setAutoSpeak] = useState<boolean>(
+        () => localStorage.getItem('wisp_auto_speak') === 'true'
+    );
     const messagesContainerRef = useRef<HTMLDivElement>(null);
+    const audioRef = useRef<HTMLAudioElement | null>(null);
+    const autoSpeakRef = useRef(autoSpeak);
 
     useEffect(() => {
         const el = messagesContainerRef.current;
@@ -143,6 +149,46 @@ export default function AssistantView() {
             .then((data: { voices: Voice[] }) => setVoices(data.voices))
             .catch(() => {});
     }, []);
+
+    useEffect(() => { autoSpeakRef.current = autoSpeak; }, [autoSpeak]);
+
+    const stopSpeaking = () => {
+        if (audioRef.current) {
+            audioRef.current.pause();
+            audioRef.current = null;
+        }
+        setSpeakingMsgId(null);
+    };
+
+    const toggleAutoSpeak = () => {
+        setAutoSpeak(prev => {
+            const next = !prev;
+            localStorage.setItem('wisp_auto_speak', String(next));
+            autoSpeakRef.current = next;
+            if (!next) stopSpeaking();
+            return next;
+        });
+    };
+
+    const speakMsg = async (msgId: string, content: string) => {
+        if (speakingMsgId === msgId) { stopSpeaking(); return; }
+        stopSpeaking();
+        setSpeakingMsgId(msgId);
+        try {
+            const b64: string = await (window as any).wispApi.speakText(content, selectedVoiceId);
+            const raw = atob(b64);
+            const bytes = new Uint8Array(raw.length);
+            for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+            const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/mpeg' }));
+            const audio = new Audio(url);
+            audioRef.current = audio;
+            audio.onended = () => { setSpeakingMsgId(null); URL.revokeObjectURL(url); };
+            audio.onerror = () => { setSpeakingMsgId(null); URL.revokeObjectURL(url); };
+            await audio.play();
+        } catch {
+            setSpeakingMsgId(null);
+        }
+    };
 
     const handleVoiceSelect = (voiceId: string) => {
         setSelectedVoiceId(voiceId);
@@ -167,12 +213,9 @@ export default function AssistantView() {
 
         const safetyMsg = getStaticResponse(text);
         if (safetyMsg) {
-            setMessages((prev) => [...prev, {
-                id: `ai-${Date.now()}`,
-                role: 'ai',
-                content: safetyMsg,
-                timestamp: Date.now(),
-            }]);
+            const staticMsg: Message = { id: `ai-${Date.now()}`, role: 'ai', content: safetyMsg, timestamp: Date.now() };
+            setMessages((prev) => [...prev, staticMsg]);
+            if (autoSpeakRef.current) speakMsg(staticMsg.id, staticMsg.content);
             return;
         }
 
@@ -188,6 +231,7 @@ export default function AssistantView() {
                 timestamp: Date.now(),
             };
             setMessages((prev) => [...prev, aiMsg]);
+            if (autoSpeakRef.current) speakMsg(aiMsg.id, aiMsg.content);
         } catch (err: any) {
             const errMsg: Message = {
                 id: `ai-${Date.now()}`,
@@ -221,6 +265,17 @@ export default function AssistantView() {
                             }`}
                     >
                         {msg.content}
+                        {msg.role === 'ai' && (
+                            <button
+                                className={`assistant-speak-btn${speakingMsgId === msg.id ? ' speaking' : ''}`}
+                                onClick={() => speakMsg(msg.id, msg.content)}
+                                title={speakingMsgId === msg.id ? 'Stop' : 'Read aloud'}
+                            >
+                                {speakingMsgId === msg.id
+                                    ? <><Square size={10} /> Stop</>
+                                    : <><Volume2 size={10} /> Read aloud</>}
+                            </button>
+                        )}
                         {msg.sources && msg.sources.length > 0 && (
                             <div className="assistant-sources">
                                 <span className="assistant-sources-label">Referenced files</span>
@@ -282,6 +337,15 @@ export default function AssistantView() {
                         </div>
                     </div>
                 )}
+                <button
+                    className={`assistant-autospeak-btn${autoSpeak ? ' active' : ''}`}
+                    onClick={toggleAutoSpeak}
+                    title={autoSpeak ? 'Auto-play on — click to turn off' : 'Auto-play off — click to turn on'}
+                >
+                    <Headphones size={12} />
+                    {autoSpeak ? 'Auto-play on' : 'Auto-play off'}
+                </button>
+                <span className="assistant-voice-bar-sep" />
                 <Volume2 size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
                 <span className="assistant-voice-label">Voice</span>
                 <button
