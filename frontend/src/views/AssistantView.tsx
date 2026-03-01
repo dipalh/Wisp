@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User } from 'lucide-react';
+import { Send, Volume2, ChevronDown } from 'lucide-react';
 
 type Message = {
     id: string;
@@ -7,6 +7,15 @@ type Message = {
     content: string;
     timestamp: number;
 };
+
+type Voice = {
+    voice_id: string;
+    name: string;
+    category: string;
+};
+
+const STORAGE_KEY = 'wisp_tts_voice';
+const DEFAULT_VOICE_ID = 'pNInz6obpgDQGcFmaJgB'; // Adam
 
 const WELCOME_MESSAGES: Message[] = [
     {
@@ -22,11 +31,30 @@ export default function AssistantView() {
     const [messages, setMessages] = useState<Message[]>(WELCOME_MESSAGES);
     const [input, setInput] = useState('');
     const [isThinking, setIsThinking] = useState(false);
-    const messagesEndRef = useRef<HTMLDivElement>(null);
+    const [voices, setVoices] = useState<Voice[]>([]);
+    const [selectedVoiceId, setSelectedVoiceId] = useState<string>(
+        () => localStorage.getItem(STORAGE_KEY) ?? DEFAULT_VOICE_ID
+    );
+    const [showVoicePanel, setShowVoicePanel] = useState(false);
+    const messagesContainerRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        const el = messagesContainerRef.current;
+        if (el) el.scrollTop = el.scrollHeight;
     }, [messages]);
+
+    useEffect(() => {
+        (window as any).wispApi.getVoices()
+            .then((data: { voices: Voice[] }) => setVoices(data.voices))
+            .catch(() => {});
+    }, []);
+
+    const handleVoiceSelect = (voiceId: string) => {
+        setSelectedVoiceId(voiceId);
+        setShowVoicePanel(false);
+        localStorage.setItem(STORAGE_KEY, voiceId);
+        window.dispatchEvent(new CustomEvent('wisp:voiceChanged', { detail: voiceId }));
+    };
 
     const handleSend = async () => {
         const text = input.trim();
@@ -63,10 +91,12 @@ export default function AssistantView() {
         }
     };
 
+    const selectedVoiceName = voices.find(v => v.voice_id === selectedVoiceId)?.name ?? 'Adam';
+
     return (
         <div className="assistant-container">
             {/* Messages */}
-            <div className="assistant-messages">
+            <div className="assistant-messages" ref={messagesContainerRef}>
                 {messages.map((msg) => (
                     <div
                         key={msg.id}
@@ -83,7 +113,40 @@ export default function AssistantView() {
                     </div>
                 )}
 
-                <div ref={messagesEndRef} />
+            </div>
+
+            {/* Voice selector */}
+            <div className="assistant-voice-bar">
+                {showVoicePanel && (
+                    <div className="assistant-voice-panel">
+                        <p className="voice-panel-label">Select voice</p>
+                        <div className="voice-list">
+                            {voices.map(v => (
+                                <div
+                                    key={v.voice_id}
+                                    className={`voice-item${v.voice_id === selectedVoiceId ? ' selected' : ''}`}
+                                    onClick={() => handleVoiceSelect(v.voice_id)}
+                                >
+                                    <span className="voice-item-name">{v.name}</span>
+                                    {v.category && <span className="chip">{v.category}</span>}
+                                </div>
+                            ))}
+                            {voices.length === 0 && (
+                                <p className="voice-panel-empty">No voices loaded.</p>
+                            )}
+                        </div>
+                    </div>
+                )}
+                <Volume2 size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                <span className="assistant-voice-label">Voice</span>
+                <button
+                    className={`assistant-voice-selector${showVoicePanel ? ' active' : ''}`}
+                    onClick={() => setShowVoicePanel(v => !v)}
+                    title="Change read-aloud voice"
+                >
+                    {selectedVoiceName}
+                    <ChevronDown size={11} />
+                </button>
             </div>
 
             {/* Input */}

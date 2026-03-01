@@ -72,6 +72,9 @@ export default function Sidebar({ activeView, onViewChange }: SidebarProps) {
 
     return (
         <nav className="sidebar">
+            {/* Traffic-light clearance — same height as main-header */}
+            <div className="sidebar-titlebar" />
+
             {/* Pill tabs — matching Claude Cowork */}
             <div className="sidebar-header">
                 <div className="sidebar-tabs">
