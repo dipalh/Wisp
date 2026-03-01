@@ -32,6 +32,16 @@ interface WispApi {
   tagFiles: (payload: { rootPath: string; provider: 'local' | 'api' }) => Promise<TaggedFile[]>;
   suggestDelete: (folderPath: string) => Promise<DeleteSuggestion[]>;
   trashPath: (targetPath: string) => Promise<{ ok: boolean }>;
+  startScanJob: () => Promise<{ job_id: string }>;
+  pollJob: (jobId: string) => Promise<{
+    job_id: string;
+    type: string;
+    status: 'queued' | 'running' | 'success' | 'failed';
+    progress_current: number;
+    progress_total: number;
+    progress_message: string;
+    updated_at: string;
+  }>;
 }
 
 interface Window {

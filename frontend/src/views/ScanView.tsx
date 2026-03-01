@@ -1,11 +1,24 @@
+import { useState, useEffect, useRef } from 'react';
 import {
     FolderPlus,
     RefreshCw,
     Wand2,
     Trash2,
     Tags,
+    CheckCircle2,
+    XCircle,
+    Loader2,
 } from 'lucide-react';
 import type { PipelineStatus, TaggedFile } from '../components/AppShell';
+
+/* ── Job progress state ── */
+type JobState = {
+    job_id: string;
+    status: 'queued' | 'running' | 'success' | 'failed';
+    progress_current: number;
+    progress_total: number;
+    progress_message: string;
+} | null;
 
 type ScanViewProps = {
     rootFolders: string[];
@@ -32,9 +45,67 @@ export default function ScanView({
 }: ScanViewProps) {
     const hasRoot = rootFolders.length > 0;
 
+    /* ── Celery job polling ── */
+    const [job, setJob] = useState<JobState>(null);
+    const [jobBusy, setJobBusy] = useState(false);
+    const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    // Cleanup on unmount
+    useEffect(() => {
+        return () => {
+            if (timerRef.current) clearInterval(timerRef.current);
+        };
+    }, []);
+
+    const startScanJob = async () => {
+        if (jobBusy) return;
+        setJobBusy(true);
+        setJob(null);
+        try {
+            const { job_id } = await window.wispApi.startScanJob();
+            setJob({
+                job_id,
+                status: 'queued',
+                progress_current: 0,
+                progress_total: 0,
+                progress_message: 'Starting...',
+            });
+
+            // Poll every 1s
+            timerRef.current = setInterval(async () => {
+                try {
+                    const data = await window.wispApi.pollJob(job_id);
+                    setJob({
+                        job_id: data.job_id,
+                        status: data.status,
+                        progress_current: data.progress_current,
+                        progress_total: data.progress_total,
+                        progress_message: data.progress_message,
+                    });
+
+                    if (data.status === 'success' || data.status === 'failed') {
+                        if (timerRef.current) clearInterval(timerRef.current);
+                        timerRef.current = null;
+                        setJobBusy(false);
+                    }
+                } catch {
+                    // If polling fails, keep trying
+                }
+            }, 1000);
+        } catch {
+            setJobBusy(false);
+            setJob(null);
+        }
+    };
+
+    const pct = job && job.progress_total > 0
+        ? Math.round((job.progress_current / job.progress_total) * 100)
+        : 0;
+
+    const isTerminal = job?.status === 'success' || job?.status === 'failed';
+
     /* ──────────────────────────────────────────────
      * Empty state — icon + title + desc + button
-     * Generous top padding, not centered in void
      * ────────────────────────────────────────────── */
     if (!hasRoot) {
         return (
@@ -55,47 +126,86 @@ export default function ScanView({
     }
 
     /* ──────────────────────────────────────────────
-     * Active state — action cards + stats + files
+     * Active state — action cards + job progress
      * ────────────────────────────────────────────── */
     return (
         <div className="doc-flow">
             <div className="scan-grid">
-                <button className="scan-action-card" onClick={onAddFolder} disabled={!!busy}>
+                <button className="scan-action-card" onClick={onAddFolder} disabled={!!busy || jobBusy}>
                     <div className="scan-action-icon"><FolderPlus size={16} /></div>
                     <span className="scan-action-title">Add folder</span>
                     <span className="scan-action-desc">Index another directory</span>
                 </button>
 
-                <button className="scan-action-card" onClick={() => onScan(rootFolders[0])} disabled={!!busy}>
+                <button className="scan-action-card" onClick={startScanJob} disabled={!!busy || jobBusy}>
+                    <div className="scan-action-icon"><RefreshCw size={16} /></div>
+                    <span className="scan-action-title">Scan (Celery)</span>
+                    <span className="scan-action-desc">Run background job</span>
+                </button>
+
+                <button className="scan-action-card" onClick={() => onScan(rootFolders[0])} disabled={!!busy || jobBusy}>
                     <div className="scan-action-icon"><RefreshCw size={16} /></div>
                     <span className="scan-action-title">Rescan</span>
                     <span className="scan-action-desc">Refresh file index</span>
                 </button>
 
-                <button className="scan-action-card" onClick={onOrganize} disabled={!!busy}>
+                <button className="scan-action-card" onClick={onOrganize} disabled={!!busy || jobBusy}>
                     <div className="scan-action-icon"><Wand2 size={16} /></div>
                     <span className="scan-action-title">Organize</span>
                     <span className="scan-action-desc">Sort by category</span>
                 </button>
 
-                <button className="scan-action-card" onClick={onSuggestDelete} disabled={!!busy}>
+                <button className="scan-action-card" onClick={onSuggestDelete} disabled={!!busy || jobBusy}>
                     <div className="scan-action-icon"><Trash2 size={16} /></div>
                     <span className="scan-action-title">Find deletables</span>
                     <span className="scan-action-desc">Cleanup candidates</span>
                 </button>
 
-                <button className="scan-action-card" onClick={() => onTagFiles('local')} disabled={!!busy}>
+                <button className="scan-action-card" onClick={() => onTagFiles('local')} disabled={!!busy || jobBusy}>
                     <div className="scan-action-icon"><Tags size={16} /></div>
                     <span className="scan-action-title">Generate tags</span>
                     <span className="scan-action-desc">Auto-tag locally</span>
                 </button>
 
-                <button className="scan-action-card" onClick={() => onTagFiles('api')} disabled={!!busy}>
+                <button className="scan-action-card" onClick={() => onTagFiles('api')} disabled={!!busy || jobBusy}>
                     <div className="scan-action-icon"><Tags size={16} /></div>
                     <span className="scan-action-title">AI tags</span>
                     <span className="scan-action-desc">Richer tags via API</span>
                 </button>
             </div>
+
+            {/* ── Job Progress Panel ── */}
+            {job && (
+                <div className="job-progress-panel">
+                    <div className="job-progress-header">
+                        {job.status === 'running' && <Loader2 size={16} className="spin" />}
+                        {job.status === 'success' && <CheckCircle2 size={16} style={{ color: 'var(--accent)' }} />}
+                        {job.status === 'failed' && <XCircle size={16} style={{ color: '#e53e3e' }} />}
+                        <span className="job-progress-status">
+                            {job.status === 'queued' && 'Queued…'}
+                            {job.status === 'running' && 'Scanning…'}
+                            {job.status === 'success' && 'Scan complete'}
+                            {job.status === 'failed' && 'Scan failed'}
+                        </span>
+                        {job.progress_total > 0 && (
+                            <span className="job-progress-count">
+                                {job.progress_current} / {job.progress_total}
+                            </span>
+                        )}
+                    </div>
+
+                    <div className="job-progress-track">
+                        <div
+                            className={`job-progress-fill ${isTerminal ? (job.status === 'success' ? 'done' : 'error') : ''}`}
+                            style={{ width: `${pct}%` }}
+                        />
+                    </div>
+
+                    <div className="job-progress-message">
+                        {job.progress_message || '—'}
+                    </div>
+                </div>
+            )}
 
             {/* Pipeline stats */}
             {pipeline.indexed > 0 && (

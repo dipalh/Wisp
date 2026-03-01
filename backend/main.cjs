@@ -541,18 +541,16 @@ ipcMain.handle('ocr:extractBuffer', async (_, base64Data, filename) => {
   return resp.json();
 });
 
-ipcMain.handle('tts:speak', async (_, text) => {
-  const resp = await fetch(`${apiUrl}/api/v1/tts/`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
-  });
-  if (!resp.ok) {
-    const detail = await resp.text().catch(() => '');
-    throw new Error(`TTS failed (HTTP ${resp.status}): ${detail}`);
-  }
-  const buf = await resp.arrayBuffer();
-  return Buffer.from(buf).toString('base64');
+ipcMain.handle('jobs:startScan', async () => {
+  const resp = await fetch(`${apiUrl}/api/v1/jobs/scan`, { method: 'POST' });
+  if (!resp.ok) throw new Error(`Start scan failed (HTTP ${resp.status})`);
+  return resp.json(); // { job_id }
+});
+
+ipcMain.handle('jobs:poll', async (_, jobId) => {
+  const resp = await fetch(`${apiUrl}/api/v1/jobs/${jobId}`);
+  if (!resp.ok) throw new Error(`Poll failed (HTTP ${resp.status})`);
+  return resp.json();
 });
 
 app.whenReady().then(() => {
