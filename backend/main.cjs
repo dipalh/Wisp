@@ -588,6 +588,29 @@ ipcMain.handle('jobs:indexedFiles', async (_, jobId) => {
   return resp.json(); // { files: [...], total: N }
 });
 
+ipcMain.handle('shell:showInFolder', (_, filePath) => {
+  shell.showItemInFolder(filePath);
+  return { ok: true };
+});
+
+ipcMain.handle('shell:openPath', async (_, filePath) => {
+  const err = await shell.openPath(filePath);
+  return { ok: !err, error: err || null };
+});
+
+ipcMain.handle('assistant:ask', async (_, query, k = 15, autoDeepen = true) => {
+  const resp = await fetch(`${apiUrl}/api/v1/assistant`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query, k, auto_deepen: autoDeepen }),
+  });
+  if (!resp.ok) {
+    const detail = await resp.text().catch(() => '');
+    throw new Error(`Assistant failed (HTTP ${resp.status}): ${detail}`);
+  }
+  return resp.json(); // { answer, proposals, query, sources, deepened_files }
+});
+
 app.whenReady().then(() => {
   createWindow();
   app.on('activate', () => {
