@@ -1,3 +1,4 @@
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -13,6 +14,12 @@ from api.v1.search import router as search_router
 from api.v1.tts import router as tts_router
 from api.v1.debloat import router as debloat_router
 import uvicorn
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 
 app = FastAPI(title="Wisp API", version="1.0.0")
 

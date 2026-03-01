@@ -6,12 +6,15 @@ Handles running Win11Debloat with different environments and options.
 import asyncio
 import base64
 import json
+import logging
 import subprocess
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 from pathlib import Path
 import platform
+
+logger = logging.getLogger(__name__)
 
 
 class ExecutionEnvironment(str, Enum):
@@ -504,8 +507,11 @@ async def execute_debloat(
         status="running",
     )
     
+    logger.info(f"Starting debloat task {task.id} with {len(option_ids)} options on {environment.value}")
+    
     try:
         params = _build_script_parameters(option_ids)
+        logger.info(f"Built parameters: {params}")
         
         if not params:
             task.status = "failed"
@@ -514,6 +520,7 @@ async def execute_debloat(
         
         # Build the command based on environment
         cmd = _build_command(environment, params)
+        logger.info(f"Executing command in {environment.value}: {cmd[:200]}...")  # Log first 200 chars
         
         # Execute the command with timeout
         proc = await asyncio.create_subprocess_shell(
@@ -530,18 +537,26 @@ async def execute_debloat(
             task.status = "failed"
             task.error = "Debloat task timed out (exceeded 5 minutes)"
             task.progress = 100
+            logger.error(f"Task {task.id} timed out")
             return task
         
         task.output = stdout.decode(errors="ignore")
         if stderr:
             task.error = stderr.decode(errors="ignore")
+            logger.warning(f"Task {task.id} stderr: {task.error}")
+        
         task.status = "completed" if proc.returncode == 0 else "failed"
         task.progress = 100
+        
+        logger.info(f"Task {task.id} finished with status={task.status}, returncode={proc.returncode}")
+        if task.output:
+            logger.info(f"Task {task.id} stdout: {task.output[:500]}...")  # First 500 chars
         
     except Exception as e:
         task.status = "failed"
         task.error = f"Execution error: {str(e)}"
         task.progress = 100
+        logger.exception(f"Task {task.id} failed with exception: {e}")
     
     return task
 
