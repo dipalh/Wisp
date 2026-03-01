@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('wispApi', {
   pickFileForOcr: () => ipcRenderer.invoke('file:pickForOcr'),
   extractText: (filePath) => ipcRenderer.invoke('ocr:extract', filePath),
   extractTextFromBuffer: (base64, filename) => ipcRenderer.invoke('ocr:extractBuffer', base64, filename),
-  startScanJob: () => ipcRenderer.invoke('jobs:startScan'),
+  startScanJob: (folders) => ipcRenderer.invoke('jobs:startScan', folders),
   pollJob: (jobId) => ipcRenderer.invoke('jobs:poll', jobId),
+  getIndexedFiles: (jobId) => ipcRenderer.invoke('jobs:indexedFiles', jobId),
 });

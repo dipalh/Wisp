@@ -541,8 +541,12 @@ ipcMain.handle('ocr:extractBuffer', async (_, base64Data, filename) => {
   return resp.json();
 });
 
-ipcMain.handle('jobs:startScan', async () => {
-  const resp = await fetch(`${apiUrl}/api/v1/jobs/scan`, { method: 'POST' });
+ipcMain.handle('jobs:startScan', async (_, folders) => {
+  const resp = await fetch(`${apiUrl}/api/v1/jobs/scan`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ folders: folders || [] }),
+  });
   if (!resp.ok) throw new Error(`Start scan failed (HTTP ${resp.status})`);
   return resp.json(); // { job_id }
 });
@@ -551,6 +555,15 @@ ipcMain.handle('jobs:poll', async (_, jobId) => {
   const resp = await fetch(`${apiUrl}/api/v1/jobs/${jobId}`);
   if (!resp.ok) throw new Error(`Poll failed (HTTP ${resp.status})`);
   return resp.json();
+});
+
+ipcMain.handle('jobs:indexedFiles', async (_, jobId) => {
+  const url = jobId
+    ? `${apiUrl}/api/v1/jobs/indexed-files?job_id=${jobId}`
+    : `${apiUrl}/api/v1/jobs/indexed-files`;
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`Indexed files fetch failed (HTTP ${resp.status})`);
+  return resp.json(); // { files: [...], total: N }
 });
 
 app.whenReady().then(() => {

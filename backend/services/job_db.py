@@ -11,13 +11,19 @@ Connection policy
 
   WAL mode is enabled so readers never block writers.
 
-Public API
-----------
+Public API — jobs
+-----------------
   ensure_table()                            -> None
   create_job(job_id, job_type)              -> None
   get_job(job_id)                           -> dict | None
   update_progress(job_id, current, total, message) -> None
   set_status(job_id, status, message="")    -> None
+
+Public API — indexed_files
+--------------------------
+  ensure_indexed_files_table()              -> None
+  upsert_indexed_file(...)                  -> None
+  get_indexed_files(job_id, limit)          -> list[dict]
 """
 from __future__ import annotations
 
@@ -157,5 +163,105 @@ def set_status(job_id: str, status: str, message: str = "") -> None:
         conn.close()
 
 
-# Auto-create table on import
+# ── indexed_files schema ──────────────────────────────────────────────
+
+
+def ensure_indexed_files_table() -> None:
+    """Create the indexed_files table if it doesn't exist (idempotent)."""
+    conn = _connect()
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS indexed_files (
+                file_id      TEXT PRIMARY KEY,
+                job_id       TEXT NOT NULL,
+                file_path    TEXT NOT NULL,
+                name         TEXT NOT NULL,
+                ext          TEXT NOT NULL DEFAULT '',
+                depth        TEXT NOT NULL DEFAULT 'card',
+                chunk_count  INTEGER NOT NULL DEFAULT 0,
+                engine       TEXT NOT NULL DEFAULT '',
+                is_deletable INTEGER NOT NULL DEFAULT 0,
+                tagged_os    INTEGER NOT NULL DEFAULT 0,
+                updated_at   TEXT NOT NULL
+            )
+        """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ── indexed_files CRUD ────────────────────────────────────────────────
+
+
+def upsert_indexed_file(
+    file_id: str,
+    job_id: str,
+    file_path: str,
+    name: str,
+    ext: str,
+    depth: str,
+    chunk_count: int,
+    engine: str,
+    is_deletable: bool,
+    tagged_os: bool,
+) -> None:
+    """Insert or update an indexed_files row."""
+    conn = _connect()
+    try:
+        conn.execute(
+            """
+            INSERT INTO indexed_files
+                (file_id, job_id, file_path, name, ext, depth,
+                 chunk_count, engine, is_deletable, tagged_os, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(file_id) DO UPDATE SET
+                job_id       = excluded.job_id,
+                file_path    = excluded.file_path,
+                name         = excluded.name,
+                ext          = excluded.ext,
+                depth        = excluded.depth,
+                chunk_count  = excluded.chunk_count,
+                engine       = excluded.engine,
+                is_deletable = excluded.is_deletable,
+                tagged_os    = excluded.tagged_os,
+                updated_at   = excluded.updated_at
+            """,
+            (
+                file_id, job_id, file_path, name, ext, depth,
+                chunk_count, engine,
+                1 if is_deletable else 0,
+                1 if tagged_os else 0,
+                _now(),
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_indexed_files(
+    job_id: str | None = None,
+    limit: int = 500,
+) -> list[dict]:
+    """Return indexed_files rows, optionally filtered by job_id."""
+    conn = _connect()
+    try:
+        if job_id:
+            rows = conn.execute(
+                "SELECT * FROM indexed_files WHERE job_id = ? "
+                "ORDER BY updated_at DESC LIMIT ?",
+                (job_id, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM indexed_files ORDER BY updated_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+# Auto-create tables on import
 ensure_table()
+ensure_indexed_files_table()
