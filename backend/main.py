@@ -12,6 +12,7 @@ from api.v1.scan import router as scan_router
 from api.v1.search import router as search_router
 from api.v1.tts import router as tts_router
 from api.v1.debloat import router as debloat_router
+from api.v1.jobs import router as jobs_router
 import uvicorn
 
 app = FastAPI(title="Wisp API", version="1.0.0")
@@ -41,6 +42,7 @@ app.include_router(organize_router, prefix="/api/v1/organize",  tags=["Organize"
 app.include_router(ingest_router,   prefix="/api/v1/ingest",    tags=["Ingest"])
 app.include_router(actions_router,  prefix="/api/v1/actions",   tags=["Actions"])
 app.include_router(debloat_router,  prefix="/api/v1/debloat",   tags=["Debloat"])
+app.include_router(jobs_router,     prefix="/api/v1/jobs",      tags=["Jobs"])
 
 
 @app.get("/health")

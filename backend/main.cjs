@@ -524,6 +524,18 @@ ipcMain.handle('ocr:extractBuffer', async (_, base64Data, filename) => {
   return resp.json();
 });
 
+ipcMain.handle('jobs:startScan', async () => {
+  const resp = await fetch(`${apiUrl}/api/v1/jobs/scan`, { method: 'POST' });
+  if (!resp.ok) throw new Error(`Start scan failed (HTTP ${resp.status})`);
+  return resp.json(); // { job_id }
+});
+
+ipcMain.handle('jobs:poll', async (_, jobId) => {
+  const resp = await fetch(`${apiUrl}/api/v1/jobs/${jobId}`);
+  if (!resp.ok) throw new Error(`Poll failed (HTTP ${resp.status})`);
+  return resp.json();
+});
+
 app.whenReady().then(() => {
   createWindow();
   app.on('activate', () => {

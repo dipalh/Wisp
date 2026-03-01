@@ -1043,6 +1043,85 @@ textarea {
   letter-spacing: var(--ls-label);
 }
 
+/* ═══════════════════════════════════════════ */
+/* JOB PROGRESS PANEL                          */
+/* ═══════════════════════════════════════════ */
+
+.job-progress-panel {
+  margin-top: var(--sp-5);
+  padding: var(--sp-5);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-card);
+}
+
+.job-progress-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-3);
+}
+
+.job-progress-status {
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.job-progress-count {
+  margin-left: auto;
+  font-size: var(--fs-small);
+  font-weight: 600;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.job-progress-track {
+  width: 100%;
+  height: 6px;
+  background: var(--bg-inset);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.job-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.job-progress-fill.done {
+  background: var(--success, #4caf50);
+}
+
+.job-progress-fill.error {
+  background: var(--danger, #e53e3e);
+}
+
+.job-progress-message {
+  margin-top: var(--sp-3);
+  font-size: var(--fs-small);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Spinner animation for Loader2 icon */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
 
 /* ═══════════════════════════════════════════ */
 /* CLEAN VIEW                                  */

@@ -15,3 +15,5 @@ elevenlabs
 lancedb
 pandas
 pypdf
+celery
+redis
