@@ -107,6 +107,9 @@ export default function AppShell() {
     const onError = useCallback((msg: string) => setError(msg), []);
     const dismissError = useCallback(() => setError(null), []);
 
+    // Organize result
+    const [organizeResult, setOrganizeResult] = useState<{ moved: number; skipped: number; categories: Record<string, number> } | null>(null);
+
     // Scan modal
     const [scanModalOpen, setScanModalOpen] = useState(false);
     const [lastCompletedJobId, setLastCompletedJobId] = useState<string | null>(null);
@@ -273,6 +276,7 @@ export default function AppShell() {
     const handleOrganize = async () => {
         if (rootFolders.length === 0) return;
         try {
+            setOrganizeResult(null);
             setBusy('Organizing files...');
             const result = await window.wispApi.organizeFolder(rootFolders[0]);
             if (result.error) {
@@ -280,6 +284,7 @@ export default function AppShell() {
                 onError(`Organize failed: ${result.error}`);
                 return;
             }
+            setOrganizeResult({ moved: result.moved, skipped: result.skipped, categories: result.categories ?? {} });
             if (rootFolders[0]) await handleScan(rootFolders[0]);
             setBusy('');
             const msg = result.moved > 0
@@ -366,6 +371,8 @@ export default function AppShell() {
                         onOrganize={handleOrganize}
                         onAddFolder={addFolder}
                         busy={busy}
+                        result={organizeResult}
+                        onReset={() => setOrganizeResult(null)}
                     />
                 );
             case 'debloat':

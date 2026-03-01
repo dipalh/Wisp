@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Volume2, ChevronDown, FileText, FolderOpen, Square, Headphones } from 'lucide-react';
+import { Send, Volume2, ChevronDown, FileText, FolderOpen, Square, Headphones, Mic } from 'lucide-react';
 
 type Message = {
     id: string;
@@ -17,8 +17,12 @@ type Voice = {
     category: string;
 };
 
+// Web Speech API fallback voices
+type WebVoice = { voice_id: string; name: string; category: string; _native: SpeechSynthesisVoice };
+
 const STORAGE_KEY = 'wisp_tts_voice';
 const DEFAULT_VOICE_ID = 'pNInz6obpgDQGcFmaJgB'; // Adam
+const WEB_VOICE_KEY = 'wisp_web_voice';
 
 const SAFETY_RULES: Array<{ pattern: RegExp; response: string }> = [
     {
@@ -127,8 +131,13 @@ export default function AssistantView() {
     const [input, setInput] = useState('');
     const [isThinking, setIsThinking] = useState(false);
     const [voices, setVoices] = useState<Voice[]>([]);
+    const [webVoices, setWebVoices] = useState<WebVoice[]>([]);
+    const [useWebSpeech, setUseWebSpeech] = useState(false);
     const [selectedVoiceId, setSelectedVoiceId] = useState<string>(
         () => localStorage.getItem(STORAGE_KEY) ?? DEFAULT_VOICE_ID
+    );
+    const [selectedWebVoiceId, setSelectedWebVoiceId] = useState<string>(
+        () => localStorage.getItem(WEB_VOICE_KEY) ?? ''
     );
     const [showVoicePanel, setShowVoicePanel] = useState(false);
     const [speakingMsgId, setSpeakingMsgId] = useState<string | null>(null);
@@ -139,17 +148,51 @@ export default function AssistantView() {
     const messagesContainerRef = useRef<HTMLDivElement>(null);
     const audioRef = useRef<HTMLAudioElement | null>(null);
     const autoSpeakRef = useRef(autoSpeak);
+    const uttRef = useRef<SpeechSynthesisUtterance | null>(null);
 
     useEffect(() => {
         const el = messagesContainerRef.current;
         if (el) el.scrollTop = el.scrollHeight;
     }, [messages]);
 
+    // Try ElevenLabs first; fall back to Web Speech API
     useEffect(() => {
         (window as any).wispApi.getVoices()
-            .then((data: { voices: Voice[] }) => setVoices(data.voices))
-            .catch(() => {});
+            .then((data: { voices: Voice[] }) => {
+                if (data.voices?.length) {
+                    setVoices(data.voices);
+                    setUseWebSpeech(false);
+                } else {
+                    loadWebVoices();
+                }
+            })
+            .catch(() => loadWebVoices());
     }, []);
+
+    function loadWebVoices() {
+        setUseWebSpeech(true);
+        const populate = () => {
+            const synth = window.speechSynthesis;
+            if (!synth) return;
+            const native = synth.getVoices();
+            const mapped: WebVoice[] = native.map(v => ({
+                voice_id: v.voiceURI,
+                name: v.name,
+                category: v.lang,
+                _native: v,
+            }));
+            setWebVoices(mapped);
+            // Pick a default English voice if none saved
+            if (!localStorage.getItem(WEB_VOICE_KEY) && mapped.length) {
+                const eng = mapped.find(v => v.category.startsWith('en')) ?? mapped[0];
+                setSelectedWebVoiceId(eng.voice_id);
+                localStorage.setItem(WEB_VOICE_KEY, eng.voice_id);
+            }
+        };
+        populate();
+        // Chrome loads voices async
+        window.speechSynthesis?.addEventListener('voiceschanged', populate);
+    }
 
     useEffect(() => { autoSpeakRef.current = autoSpeak; }, [autoSpeak]);
 
@@ -157,6 +200,10 @@ export default function AssistantView() {
         if (audioRef.current) {
             audioRef.current.pause();
             audioRef.current = null;
+        }
+        if (uttRef.current) {
+            window.speechSynthesis?.cancel();
+            uttRef.current = null;
         }
         setSpeakingMsgId(null);
     };
@@ -171,7 +218,25 @@ export default function AssistantView() {
         });
     };
 
+    const speakWebSpeech = (msgId: string, content: string) => {
+        if (speakingMsgId === msgId) { stopSpeaking(); return; }
+        stopSpeaking();
+        const synth = window.speechSynthesis;
+        if (!synth) return;
+        const utt = new SpeechSynthesisUtterance(content.replace(/\*\*/g, '').replace(/#+/g, ''));
+        const allVoices = synth.getVoices();
+        const match = allVoices.find(v => v.voiceURI === selectedWebVoiceId);
+        if (match) utt.voice = match;
+        utt.rate = 0.95;
+        utt.onend = () => { setSpeakingMsgId(null); uttRef.current = null; };
+        utt.onerror = () => { setSpeakingMsgId(null); uttRef.current = null; };
+        uttRef.current = utt;
+        setSpeakingMsgId(msgId);
+        synth.speak(utt);
+    };
+
     const speakMsg = async (msgId: string, content: string) => {
+        if (useWebSpeech) { speakWebSpeech(msgId, content); return; }
         if (speakingMsgId === msgId) { stopSpeaking(); return; }
         stopSpeaking();
         setSpeakingMsgId(msgId);
@@ -192,10 +257,15 @@ export default function AssistantView() {
     };
 
     const handleVoiceSelect = (voiceId: string) => {
-        setSelectedVoiceId(voiceId);
+        if (useWebSpeech) {
+            setSelectedWebVoiceId(voiceId);
+            localStorage.setItem(WEB_VOICE_KEY, voiceId);
+        } else {
+            setSelectedVoiceId(voiceId);
+            localStorage.setItem(STORAGE_KEY, voiceId);
+            window.dispatchEvent(new CustomEvent('wisp:voiceChanged', { detail: voiceId }));
+        }
         setShowVoicePanel(false);
-        localStorage.setItem(STORAGE_KEY, voiceId);
-        window.dispatchEvent(new CustomEvent('wisp:voiceChanged', { detail: voiceId }));
     };
 
     const handleSend = async () => {
@@ -253,7 +323,9 @@ export default function AssistantView() {
         }
     };
 
-    const selectedVoiceName = voices.find(v => v.voice_id === selectedVoiceId)?.name ?? 'Adam';
+    const activeVoices = useWebSpeech ? webVoices : voices;
+    const activeVoiceId = useWebSpeech ? selectedWebVoiceId : selectedVoiceId;
+    const selectedVoiceName = activeVoices.find(v => v.voice_id === activeVoiceId)?.name ?? (useWebSpeech ? 'System voice' : 'Adam');
 
     return (
         <div className="assistant-container">
@@ -329,21 +401,23 @@ export default function AssistantView() {
             <div className="assistant-voice-bar">
                 {showVoicePanel && (
                     <div className="assistant-voice-panel">
-                        <p className="voice-panel-label">Select voice</p>
+                        <p className="voice-panel-label">
+                            {useWebSpeech ? 'System voices (built-in)' : 'ElevenLabs voices'}
+                        </p>
                         <div className="voice-list">
-                            {voices.map(v => (
+                            {activeVoices.map(v => (
                                 <div
                                     key={v.voice_id}
-                                    className={`voice-item${v.voice_id === selectedVoiceId ? ' selected' : ''}`}
-                                    ref={v.voice_id === selectedVoiceId ? (el) => el?.scrollIntoView({ block: 'nearest' }) : null}
+                                    className={`voice-item${v.voice_id === activeVoiceId ? ' selected' : ''}`}
+                                    ref={v.voice_id === activeVoiceId ? (el) => el?.scrollIntoView({ block: 'nearest' }) : null}
                                     onClick={() => handleVoiceSelect(v.voice_id)}
                                 >
                                     <span className="voice-item-name">{v.name}</span>
                                     {v.category && <span className="chip">{v.category}</span>}
                                 </div>
                             ))}
-                            {voices.length === 0 && (
-                                <p className="voice-panel-empty">No voices loaded.</p>
+                            {activeVoices.length === 0 && (
+                                <p className="voice-panel-empty">No voices found.</p>
                             )}
                         </div>
                     </div>
@@ -351,18 +425,21 @@ export default function AssistantView() {
                 <button
                     className={`assistant-autospeak-btn${autoSpeak ? ' active' : ''}`}
                     onClick={toggleAutoSpeak}
-                    title={autoSpeak ? 'Auto-play on (click to turn off)' : 'Auto-play off (click to turn on)'}
+                    title={autoSpeak ? 'Auto-speak on (click to turn off)' : 'Auto-speak off (click to turn on)'}
                 >
                     <Headphones size={12} />
-                    {autoSpeak ? 'Auto-play on' : 'Auto-play off'}
+                    {autoSpeak ? 'Auto-speak on' : 'Auto-speak off'}
                 </button>
                 <span className="assistant-voice-bar-sep" />
-                <Volume2 size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-                <span className="assistant-voice-label">Voice</span>
+                {useWebSpeech
+                    ? <Mic size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} title="Using built-in system TTS" />
+                    : <Volume2 size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                }
+                <span className="assistant-voice-label">{useWebSpeech ? 'System' : 'ElevenLabs'}</span>
                 <button
                     className={`assistant-voice-selector${showVoicePanel ? ' active' : ''}`}
                     onClick={() => setShowVoicePanel(v => !v)}
-                    title="Change read-aloud voice"
+                    title="Change voice"
                 >
                     {selectedVoiceName}
                     <ChevronDown size={11} />

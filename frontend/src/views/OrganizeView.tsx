@@ -1,10 +1,28 @@
-import { FolderSync, FolderPlus, ArrowRight, Loader2, Info } from 'lucide-react';
+import { FolderSync, FolderPlus, ArrowRight, Loader2, Info, CheckCircle2, RotateCcw, FileText, Image, Music, Video, Archive, Code2, Package } from 'lucide-react';
+
+type OrganizeResult = {
+    moved: number;
+    skipped: number;
+    categories: Record<string, number>;
+};
 
 type OrganizeViewProps = {
     hasRoot: boolean;
     onOrganize: () => Promise<void>;
     onAddFolder: () => void;
     busy: string;
+    result: OrganizeResult | null;
+    onReset: () => void;
+};
+
+const CATEGORY_ICONS: Record<string, typeof FileText> = {
+    Documents: FileText,
+    Images: Image,
+    Audio: Music,
+    Videos: Video,
+    Archives: Archive,
+    Code: Code2,
+    Others: Package,
 };
 
 const EXAMPLES = [
@@ -13,12 +31,9 @@ const EXAMPLES = [
     { from: 'song.mp3', to: 'Audio/' },
     { from: 'clip.mp4', to: 'Videos/' },
     { from: 'backup.zip', to: 'Archives/' },
-    { from: 'app.tsx', to: 'Code/' },
-    { from: 'readme.txt', to: 'Documents/' },
-    { from: 'misc.bin', to: 'Others/' },
 ];
 
-export default function OrganizeView({ hasRoot, onOrganize, onAddFolder, busy }: OrganizeViewProps) {
+export default function OrganizeView({ hasRoot, onOrganize, onAddFolder, busy, result, onReset }: OrganizeViewProps) {
     const isOrganizing = busy.toLowerCase().includes('organiz');
 
     if (!hasRoot) {
@@ -39,6 +54,63 @@ export default function OrganizeView({ hasRoot, onOrganize, onAddFolder, busy }:
         );
     }
 
+    // Results screen
+    if (result && !isOrganizing) {
+        const cats = Object.entries(result.categories).sort((a, b) => b[1] - a[1]);
+        const nothingToDo = result.moved === 0;
+
+        return (
+            <div className="organize-view">
+                <div className="organize-result">
+                    <div className={`organize-result-icon ${nothingToDo ? 'organize-result-icon--neutral' : ''}`}>
+                        <CheckCircle2 size={32} strokeWidth={1.5} />
+                    </div>
+
+                    <h2 className="organize-result-title">
+                        {nothingToDo ? 'Already organized' : `${result.moved} files organized`}
+                    </h2>
+                    <p className="organize-result-subtitle">
+                        {nothingToDo
+                            ? 'All top-level files are already in category folders.'
+                            : `${result.skipped > 0 ? `${result.skipped} skipped (already sorted). ` : ''}Files moved into:`}
+                    </p>
+
+                    {cats.length > 0 && (
+                        <div className="organize-cats-grid">
+                            {cats.map(([cat, count]) => {
+                                const Icon = CATEGORY_ICONS[cat] ?? Package;
+                                return (
+                                    <div key={cat} className="organize-cat-card">
+                                        <div className="organize-cat-card-icon">
+                                            <Icon size={18} strokeWidth={1.5} />
+                                        </div>
+                                        <div className="organize-cat-card-info">
+                                            <span className="organize-cat-card-name">{cat}/</span>
+                                            <span className="organize-cat-card-count">{count} file{count !== 1 ? 's' : ''}</span>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+
+                    <div className="organize-result-actions">
+                        <button className="btn btn-secondary" onClick={onReset}>
+                            <RotateCcw size={14} />
+                            Organize again
+                        </button>
+                    </div>
+
+                    <div className="organize-info-box" style={{ marginTop: 0 }}>
+                        <Info size={14} />
+                        <p>Files were moved into subfolders inside your selected folder. Move them back manually to undo.</p>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // Default: setup screen
     return (
         <div className="organize-view">
             <div className="organize-hero">
@@ -58,7 +130,7 @@ export default function OrganizeView({ hasRoot, onOrganize, onAddFolder, busy }:
                 </div>
 
                 <div className="organize-preview">
-                    {EXAMPLES.slice(0, 5).map(({ from, to }) => (
+                    {EXAMPLES.map(({ from, to }) => (
                         <div className="organize-preview-row" key={from}>
                             <span className="organize-preview-from">{from}</span>
                             <ArrowRight size={14} className="organize-preview-arrow" />
@@ -89,8 +161,7 @@ export default function OrganizeView({ hasRoot, onOrganize, onAddFolder, busy }:
                     <Info size={14} />
                     <p>
                         Only top-level files are moved. Existing subfolders are left untouched.
-                        Hidden files (starting with a dot) are skipped. You can always move
-                        files back manually to undo.
+                        Hidden files (starting with a dot) are skipped.
                     </p>
                 </div>
             </div>

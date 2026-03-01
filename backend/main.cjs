@@ -411,12 +411,12 @@ ipcMain.handle('folder:scan', async (_, rootPath) => {
 
 ipcMain.handle('folder:organize', async (_, rootPath) => {
   try {
-    // Fast local organize: move top-level files into category subfolders
     const entries = await fs.readdir(rootPath, { withFileTypes: true });
     const files = entries.filter(e => e.isFile() && !e.name.startsWith('.'));
 
     let moved = 0;
     let skipped = 0;
+    const categories = {}; // category -> count of files moved
 
     for (const file of files) {
       const category = detectCategory(file.name);
@@ -424,29 +424,25 @@ ipcMain.handle('folder:organize', async (_, rootPath) => {
       const src = path.join(rootPath, file.name);
       const dest = path.join(destDir, file.name);
 
-      // Don't move if already in the right place
       if (src === dest) { skipped++; continue; }
 
       try {
-        // Create category folder if it doesn't exist
         await fs.mkdir(destDir, { recursive: true });
-        // Move the file
         await fs.rename(src, dest);
         moved++;
+        categories[category] = (categories[category] || 0) + 1;
       } catch (moveErr) {
         console.warn(`[organize] could not move ${file.name}: ${moveErr.message}`);
         skipped++;
       }
     }
 
-    // Invalidate tree cache for this folder
     TREE_CACHE.delete(rootPath);
-
     console.log(`[organize] done: ${moved} moved, ${skipped} skipped out of ${files.length} files`);
-    return { moved, skipped };
+    return { moved, skipped, categories };
   } catch (err) {
     console.error('[organize] error:', err.message);
-    return { moved: 0, skipped: 0, error: err.message };
+    return { moved: 0, skipped: 0, categories: {}, error: err.message };
   }
 })
 
@@ -561,23 +557,28 @@ ipcMain.handle('ocr:extractBuffer', async (_, base64Data, filename) => {
 ipcMain.handle('tts:speak', async (_, text, voiceId) => {
   const body = { text };
   if (voiceId) body.voice_id = voiceId;
-  const resp = await fetch(`${apiUrl}/api/v1/tts/`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!resp.ok) {
-    const detail = await resp.text().catch(() => '');
-    throw new Error(`TTS failed (HTTP ${resp.status}): ${detail}`);
+  try {
+    const resp = await fetch(`${apiUrl}/api/v1/tts/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) return null; // ElevenLabs not installed; frontend falls back to Web Speech
+    const buf = await resp.arrayBuffer();
+    return Buffer.from(buf).toString('base64');
+  } catch {
+    return null;
   }
-  const buf = await resp.arrayBuffer();
-  return Buffer.from(buf).toString('base64');
 });
 
 ipcMain.handle('tts:getVoices', async () => {
-  const resp = await fetch(`${apiUrl}/api/v1/tts/voices`);
-  if (!resp.ok) throw new Error(`Get voices failed (HTTP ${resp.status})`);
-  return resp.json();
+  try {
+    const resp = await fetch(`${apiUrl}/api/v1/tts/voices`);
+    if (!resp.ok) return { voices: [] }; // ElevenLabs not installed
+    return resp.json();
+  } catch {
+    return { voices: [] };
+  }
 });
 
 ipcMain.handle('jobs:startScan', async (_, folders) => {
