@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('wispApi', {
   transcribeFile:        (filePath)           => ipcRenderer.invoke('transcribe:file', filePath),
   speakText:             (text, voiceId)      => ipcRenderer.invoke('tts:speak', text, voiceId),
   getVoices:             ()                   => ipcRenderer.invoke('tts:getVoices'),
-  startScanJob: () => ipcRenderer.invoke('jobs:startScan'),
+  startScanJob: (folders) => ipcRenderer.invoke('jobs:startScan', folders),
   pollJob: (jobId) => ipcRenderer.invoke('jobs:poll', jobId),
+  getIndexedFiles: (jobId) => ipcRenderer.invoke('jobs:indexedFiles', jobId),
 });

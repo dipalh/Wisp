@@ -3,28 +3,44 @@ Job management API — trigger and poll long-running Celery tasks.
 
 Routes
 ------
-  POST /api/v1/jobs/scan       Start a dummy scan job
-  GET  /api/v1/jobs/{job_id}   Poll job progress
+  POST /api/v1/jobs/scan              Start a scan-and-index job
+  GET  /api/v1/jobs/indexed-files     List indexed files (optional ?job_id= filter)
+  GET  /api/v1/jobs/{job_id}          Poll job progress
 """
 from __future__ import annotations
 
 import uuid
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
-from services.job_db import create_job, get_job
-from tasks.scan import dummy_scan
+from services.job_db import create_job, get_job, get_indexed_files
+from tasks.scan import scan_and_index
 
 router = APIRouter()
 
 
-@router.post("/scan", summary="Start a scan job (dummy)")
-async def start_scan_job():
-    """Create a queued job and dispatch the dummy scan task via Celery."""
+class ScanRequest(BaseModel):
+    folders: list[str]
+
+
+@router.post("/scan", summary="Start a scan & index job")
+async def start_scan_job(body: ScanRequest):
+    """Create a queued job and dispatch scan_and_index via Celery."""
+    if not body.folders:
+        raise HTTPException(status_code=400, detail="folders list must not be empty")
     job_id = uuid.uuid4().hex
     create_job(job_id, "scan")
-    dummy_scan.delay(job_id)
+    scan_and_index.delay(job_id, body.folders)
     return {"job_id": job_id}
+
+
+@router.get("/indexed-files", summary="List indexed files")
+async def list_indexed_files(job_id: Optional[str] = None, limit: int = 500):
+    """Return indexed_files rows, optionally filtered by job_id."""
+    rows = get_indexed_files(job_id=job_id, limit=limit)
+    return {"files": rows, "total": len(rows)}
 
 
 @router.get("/{job_id}", summary="Poll job progress")

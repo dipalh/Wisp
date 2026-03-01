@@ -221,7 +221,7 @@ def _has_keyword_windows(path: str, keyword: str) -> bool:
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def set_deletable(path: Path | str, value: bool = True) -> None:
+def set_deletable(path: Path | str, value: bool = True) -> bool:
     """Add or remove the "Deletable" OS-level tag.
 
     - macOS: sets/removes the Red Finder tag.
@@ -229,18 +229,24 @@ def set_deletable(path: Path | str, value: bool = True) -> None:
     - Other OS: no-op with debug log.
 
     Idempotent.  Never raises.
+
+    Returns:
+        True if the OS tag was successfully written (or confirmed
+        idempotent).  False on unsupported OS or write failure.
     """
     path_str = str(path)
 
     try:
         if _IS_MACOS:
-            _set_deletable_macos(path_str, value)
+            return _set_deletable_macos(path_str, value)
         elif _IS_WINDOWS:
-            _set_keyword_windows(path_str, _TAG_NAME, add=value)
+            return _set_keyword_windows(path_str, _TAG_NAME, add=value)
         else:
             logger.debug("set_deletable: unsupported OS %s", platform.system())
+            return False
     except Exception as e:
         logger.warning("set_deletable failed for %s: %s", path_str, e)
+        return False
 
 
 def is_deletable(path: Path | str) -> bool:
@@ -373,25 +379,26 @@ def _file_age_days(path: Path) -> int | None:
 # ── macOS implementation ──────────────────────────────────────────────────────
 
 
-def _set_deletable_macos(path: str, value: bool) -> None:
-    """Add or remove the Deletable Finder tag on macOS."""
+def _set_deletable_macos(path: str, value: bool) -> bool:
+    """Add or remove the Deletable Finder tag on macOS.
+
+    Returns True if the tag state matches the requested value.
+    """
     entries = _read_tags_macos(path)
     existing_names = [e.split("\n")[0] for e in entries]
     has_tag = _TAG_NAME in existing_names
 
     if value and has_tag:
-        return  # already tagged — idempotent
+        return True   # already tagged — idempotent
     if not value and not has_tag:
-        return  # already untagged — idempotent
+        return True   # already untagged — idempotent
 
     if value:
-        # Add tag → preserve existing
         entries.append(_TAG_ENTRY)
-        _write_tags_macos(path, entries)
+        return _write_tags_macos(path, entries)
     else:
-        # Remove tag → preserve others
         filtered = [e for e in entries if e.split("\n")[0] != _TAG_NAME]
         if filtered:
-            _write_tags_macos(path, filtered)
+            return _write_tags_macos(path, filtered)
         else:
-            _delete_xattr_macos(path)
+            return _delete_xattr_macos(path)

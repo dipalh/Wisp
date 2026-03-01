@@ -25,6 +25,20 @@ interface DeleteSuggestion {
   score: number;
 }
 
+interface IndexedFile {
+  file_id: string;
+  job_id: string;
+  file_path: string;
+  name: string;
+  ext: string;
+  depth: string;
+  chunk_count: number;
+  engine: string;
+  is_deletable: number;
+  tagged_os: number;
+  updated_at: string;
+}
+
 interface WispApi {
   pickFolder: () => Promise<string | null>;
   scanFolder: (folderPath: string) => Promise<TreeNode | null>;
@@ -32,7 +46,7 @@ interface WispApi {
   tagFiles: (payload: { rootPath: string; provider: 'local' | 'api' }) => Promise<TaggedFile[]>;
   suggestDelete: (folderPath: string) => Promise<DeleteSuggestion[]>;
   trashPath: (targetPath: string) => Promise<{ ok: boolean }>;
-  startScanJob: () => Promise<{ job_id: string }>;
+  startScanJob: (folders: string[]) => Promise<{ job_id: string }>;
   pollJob: (jobId: string) => Promise<{
     job_id: string;
     type: string;
@@ -41,6 +55,10 @@ interface WispApi {
     progress_total: number;
     progress_message: string;
     updated_at: string;
+  }>;
+  getIndexedFiles: (jobId?: string) => Promise<{
+    files: IndexedFile[];
+    total: number;
   }>;
 }
 

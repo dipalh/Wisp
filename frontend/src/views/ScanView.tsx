@@ -8,6 +8,9 @@ import {
     CheckCircle2,
     XCircle,
     Loader2,
+    FileText,
+    AlertTriangle,
+    Search,
 } from 'lucide-react';
 import type { PipelineStatus, TaggedFile } from '../components/AppShell';
 
@@ -20,6 +23,20 @@ type JobState = {
     progress_message: string;
 } | null;
 
+type IndexedFile = {
+    file_id: string;
+    job_id: string;
+    file_path: string;
+    name: string;
+    ext: string;
+    depth: string;
+    chunk_count: number;
+    engine: string;
+    is_deletable: number;
+    tagged_os: number;
+    updated_at: string;
+};
+
 type ScanViewProps = {
     rootFolders: string[];
     onAddFolder: () => void;
@@ -30,6 +47,18 @@ type ScanViewProps = {
     pipeline: PipelineStatus;
     taggedFiles: TaggedFile[];
     busy: string;
+};
+
+const DEPTH_LABELS: Record<string, string> = {
+    deep: 'Full',
+    preview: 'Preview',
+    card: 'Card',
+};
+
+const DEPTH_COLORS: Record<string, string> = {
+    deep: 'var(--accent)',
+    preview: '#d69e2e',
+    card: 'var(--text-faint)',
 };
 
 export default function ScanView({
@@ -50,28 +79,45 @@ export default function ScanView({
     const [jobBusy, setJobBusy] = useState(false);
     const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-    // Cleanup on unmount
+    /* ── Indexed files ── */
+    const [indexedFiles, setIndexedFiles] = useState<IndexedFile[]>([]);
+    const [showFiles, setShowFiles] = useState(false);
+
     useEffect(() => {
         return () => {
             if (timerRef.current) clearInterval(timerRef.current);
         };
     }, []);
 
+    const fetchIndexedFiles = async (jobId?: string) => {
+        try {
+            const data = await window.wispApi.getIndexedFiles(jobId);
+            setIndexedFiles(data.files || []);
+        } catch {
+            // Silently ignore — files will just be empty
+        }
+    };
+
+    // Load any existing indexed files on mount
+    useEffect(() => {
+        fetchIndexedFiles();
+    }, []);
+
     const startScanJob = async () => {
-        if (jobBusy) return;
+        if (jobBusy || rootFolders.length === 0) return;
         setJobBusy(true);
         setJob(null);
+        setIndexedFiles([]);
         try {
-            const { job_id } = await window.wispApi.startScanJob();
+            const { job_id } = await window.wispApi.startScanJob(rootFolders);
             setJob({
                 job_id,
                 status: 'queued',
                 progress_current: 0,
                 progress_total: 0,
-                progress_message: 'Starting...',
+                progress_message: 'Starting\u2026',
             });
 
-            // Poll every 1s
             timerRef.current = setInterval(async () => {
                 try {
                     const data = await window.wispApi.pollJob(job_id);
@@ -87,9 +133,13 @@ export default function ScanView({
                         if (timerRef.current) clearInterval(timerRef.current);
                         timerRef.current = null;
                         setJobBusy(false);
+                        if (data.status === 'success') {
+                            fetchIndexedFiles(job_id);
+                            setShowFiles(true);
+                        }
                     }
                 } catch {
-                    // If polling fails, keep trying
+                    // keep polling
                 }
             }, 1000);
         } catch {
@@ -104,8 +154,14 @@ export default function ScanView({
 
     const isTerminal = job?.status === 'success' || job?.status === 'failed';
 
+    /* ── Stats from indexed files ── */
+    const deepCount = indexedFiles.filter(f => f.depth === 'deep').length;
+    const previewCount = indexedFiles.filter(f => f.depth === 'preview').length;
+    const cardCount = indexedFiles.filter(f => f.depth === 'card').length;
+    const deletableCount = indexedFiles.filter(f => f.is_deletable).length;
+
     /* ──────────────────────────────────────────────
-     * Empty state — icon + title + desc + button
+     * Empty state
      * ────────────────────────────────────────────── */
     if (!hasRoot) {
         return (
@@ -126,7 +182,7 @@ export default function ScanView({
     }
 
     /* ──────────────────────────────────────────────
-     * Active state — action cards + job progress
+     * Active state
      * ────────────────────────────────────────────── */
     return (
         <div className="doc-flow">
@@ -138,9 +194,9 @@ export default function ScanView({
                 </button>
 
                 <button className="scan-action-card" onClick={startScanJob} disabled={!!busy || jobBusy}>
-                    <div className="scan-action-icon"><RefreshCw size={16} /></div>
-                    <span className="scan-action-title">Scan (Celery)</span>
-                    <span className="scan-action-desc">Run background job</span>
+                    <div className="scan-action-icon"><Search size={16} /></div>
+                    <span className="scan-action-title">Scan &amp; Index</span>
+                    <span className="scan-action-desc">Embed files via AI pipeline</span>
                 </button>
 
                 <button className="scan-action-card" onClick={() => onScan(rootFolders[0])} disabled={!!busy || jobBusy}>
@@ -182,8 +238,8 @@ export default function ScanView({
                         {job.status === 'success' && <CheckCircle2 size={16} style={{ color: 'var(--accent)' }} />}
                         {job.status === 'failed' && <XCircle size={16} style={{ color: '#e53e3e' }} />}
                         <span className="job-progress-status">
-                            {job.status === 'queued' && 'Queued…'}
-                            {job.status === 'running' && 'Scanning…'}
+                            {job.status === 'queued' && 'Queued\u2026'}
+                            {job.status === 'running' && 'Indexing\u2026'}
                             {job.status === 'success' && 'Scan complete'}
                             {job.status === 'failed' && 'Scan failed'}
                         </span>
@@ -202,13 +258,33 @@ export default function ScanView({
                     </div>
 
                     <div className="job-progress-message">
-                        {job.progress_message || '—'}
+                        {job.progress_message || '\u2014'}
                     </div>
                 </div>
             )}
 
-            {/* Pipeline stats */}
-            {pipeline.indexed > 0 && (
+            {/* ── Indexed files summary ── */}
+            {indexedFiles.length > 0 && (
+                <div className="scan-stats">
+                    {[
+                        { label: 'Indexed', value: indexedFiles.length },
+                        { label: 'Deep', value: deepCount },
+                        { label: 'Preview', value: previewCount },
+                        { label: 'Card', value: cardCount },
+                        { label: 'Deletable', value: deletableCount },
+                    ].map((s) => (
+                        <div className="scan-stat" key={s.label}>
+                            <span className="scan-stat-value">
+                                {s.value > 0 ? s.value.toLocaleString() : '\u2014'}
+                            </span>
+                            <span className="scan-stat-label">{s.label}</span>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {/* ── Pipeline stats (from Electron scan, if any) ── */}
+            {pipeline.indexed > 0 && indexedFiles.length === 0 && (
                 <div className="scan-stats">
                     {[
                         { label: 'Indexed', value: pipeline.indexed },
@@ -218,7 +294,7 @@ export default function ScanView({
                     ].map((s) => (
                         <div className="scan-stat" key={s.label}>
                             <span className="scan-stat-value">
-                                {s.value > 0 ? s.value.toLocaleString() : '—'}
+                                {s.value > 0 ? s.value.toLocaleString() : '\u2014'}
                             </span>
                             <span className="scan-stat-label">{s.label}</span>
                         </div>
@@ -226,7 +302,63 @@ export default function ScanView({
                 </div>
             )}
 
-            {/* Tagged files */}
+            {/* ── Indexed files list ── */}
+            {indexedFiles.length > 0 && (
+                <>
+                    <div className="doc-divider" />
+                    <div
+                        className="scan-file-list-title"
+                        style={{ marginTop: 16, cursor: 'pointer', userSelect: 'none' }}
+                        onClick={() => setShowFiles(v => !v)}
+                    >
+                        Indexed files · {indexedFiles.length}
+                        <span style={{ fontSize: 11, marginLeft: 6, color: 'var(--text-faint)' }}>
+                            {showFiles ? '▾' : '▸'}
+                        </span>
+                    </div>
+                    {showFiles && indexedFiles.slice(0, 100).map((file) => (
+                        <div className="file-item" key={file.file_id} title={file.file_path}>
+                            <div className="file-item-info">
+                                <div className="file-item-name" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <FileText size={13} style={{ flexShrink: 0, color: 'var(--text-faint)' }} />
+                                    {file.name}
+                                    <span
+                                        className="tag"
+                                        style={{
+                                            fontSize: 10,
+                                            color: DEPTH_COLORS[file.depth] || 'var(--text-faint)',
+                                            borderColor: DEPTH_COLORS[file.depth] || 'var(--border)',
+                                        }}
+                                    >
+                                        {DEPTH_LABELS[file.depth] || file.depth}
+                                    </span>
+                                    {file.chunk_count > 0 && (
+                                        <span className="tag" style={{ fontSize: 10 }}>
+                                            {file.chunk_count} chunks
+                                        </span>
+                                    )}
+                                    {file.is_deletable === 1 && (
+                                        <span className="tag" style={{ fontSize: 10, color: '#e53e3e', borderColor: '#e53e3e' }}>
+                                            <AlertTriangle size={10} style={{ marginRight: 2 }} />
+                                            Deletable
+                                        </span>
+                                    )}
+                                </div>
+                                <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1, paddingLeft: 19 }}>
+                                    {file.file_path}
+                                </div>
+                            </div>
+                        </div>
+                    ))}
+                    {indexedFiles.length > 100 && showFiles && (
+                        <div style={{ fontSize: 12, color: 'var(--text-faint)', padding: '8px 0' }}>
+                            … and {indexedFiles.length - 100} more files
+                        </div>
+                    )}
+                </>
+            )}
+
+            {/* ── Tagged files ── */}
             {taggedFiles.length > 0 && (
                 <>
                     <div className="doc-divider" />
