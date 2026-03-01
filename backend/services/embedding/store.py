@@ -99,10 +99,9 @@ def _get_table() -> lancedb.table.Table:
     if _db is None:
         init()  # first call — use defaults
     if _table is None:
-        existing = _db.table_names()
+        existing = _db.list_tables()
         if TABLE_NAME in existing:
             tbl = _db.open_table(TABLE_NAME)
-            # Auto-migrate: drop table if schema is outdated
             col_names = [f.name for f in tbl.schema]
             if not _REQUIRED_COLS.issubset(col_names):
                 _db.drop_table(TABLE_NAME)
@@ -110,7 +109,10 @@ def _get_table() -> lancedb.table.Table:
             else:
                 _table = tbl
         else:
-            _table = _db.create_table(TABLE_NAME, schema=_SCHEMA)
+            try:
+                _table = _db.create_table(TABLE_NAME, schema=_SCHEMA)
+            except ValueError:
+                _table = _db.open_table(TABLE_NAME)
     return _table
 
 

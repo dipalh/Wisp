@@ -39,6 +39,21 @@ interface IndexedFile {
   updated_at: string;
 }
 
+interface SearchResult {
+  file_id: string;
+  file_path: string;
+  ext: string;
+  score: number;
+  snippet: string;
+  depth: string;
+}
+
+interface SearchResponse {
+  results: SearchResult[];
+  query: string;
+  total: number;
+}
+
 interface WispApi {
   pickFolder: () => Promise<string | null>;
   scanFolder: (folderPath: string) => Promise<TreeNode | null>;
@@ -60,6 +75,8 @@ interface WispApi {
     files: IndexedFile[];
     total: number;
   }>;
+  openFile: (filePath: string) => Promise<{ ok: boolean }>;
+  searchMemory: (query: string, opts?: { k?: number; ext?: string }) => Promise<SearchResponse>;
 }
 
 interface Window {

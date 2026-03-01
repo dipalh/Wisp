@@ -13,6 +13,7 @@ TESTS=(
   tests/test_sqlite_robustness.py
   tests/test_pipeline_no_tag.py
   tests/test_integration_scan.py
+  tests/test_search_api.py
 )
 
 python -m pytest "${TESTS[@]}" "$@"

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import {
     FolderPlus,
-    RefreshCw,
+    FolderOpen,
     Wand2,
     Trash2,
     Tags,
@@ -12,7 +12,7 @@ import {
     AlertTriangle,
     Search,
 } from 'lucide-react';
-import type { PipelineStatus, TaggedFile } from '../components/AppShell';
+import type { TaggedFile } from '../components/AppShell';
 
 /* ── Job progress state ── */
 type JobState = {
@@ -40,13 +40,12 @@ type IndexedFile = {
 type ScanViewProps = {
     rootFolders: string[];
     onAddFolder: () => void;
-    onScan: (folder: string) => void;
     onOrganize: () => void;
     onSuggestDelete: () => void;
     onTagFiles: (provider: 'local' | 'api') => void;
-    pipeline: PipelineStatus;
     taggedFiles: TaggedFile[];
     busy: string;
+    onError: (message: string) => void;
 };
 
 const DEPTH_LABELS: Record<string, string> = {
@@ -61,16 +60,17 @@ const DEPTH_COLORS: Record<string, string> = {
     card: 'var(--text-faint)',
 };
 
+const MAX_POLL_FAILURES = 3;
+
 export default function ScanView({
     rootFolders,
     onAddFolder,
-    onScan,
     onOrganize,
     onSuggestDelete,
     onTagFiles,
-    pipeline,
     taggedFiles,
     busy,
+    onError,
 }: ScanViewProps) {
     const hasRoot = rootFolders.length > 0;
 
@@ -78,6 +78,15 @@ export default function ScanView({
     const [job, setJob] = useState<JobState>(null);
     const [jobBusy, setJobBusy] = useState(false);
     const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const pollFailures = useRef(0);
+
+    /* ── Debug / truth panel ── */
+    const [scanStartTime, setScanStartTime] = useState<number | null>(null);
+    const [elapsed, setElapsed] = useState(0);
+    const [debugLog, setDebugLog] = useState<string[]>([]);
+    const [showDebug, setShowDebug] = useState(false);
+    const [lastPollTime, setLastPollTime] = useState('');
+    const elapsedRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     /* ── Indexed files ── */
     const [indexedFiles, setIndexedFiles] = useState<IndexedFile[]>([]);
@@ -86,6 +95,7 @@ export default function ScanView({
     useEffect(() => {
         return () => {
             if (timerRef.current) clearInterval(timerRef.current);
+            if (elapsedRef.current) clearInterval(elapsedRef.current);
         };
     }, []);
 
@@ -93,21 +103,44 @@ export default function ScanView({
         try {
             const data = await window.wispApi.getIndexedFiles(jobId);
             setIndexedFiles(data.files || []);
-        } catch {
-            // Silently ignore — files will just be empty
+        } catch (e: any) {
+            onError(`Failed to load indexed files: ${e?.message ?? e}`);
         }
     };
 
-    // Load any existing indexed files on mount
-    useEffect(() => {
-        fetchIndexedFiles();
-    }, []);
+    const handleOpenFile = async (filePath: string) => {
+        try {
+            await window.wispApi.openFile(filePath);
+        } catch (e: any) {
+            onError(`Open failed: ${e?.message ?? e}`);
+        }
+    };
+
+    const stopElapsedTimer = () => {
+        if (elapsedRef.current) {
+            clearInterval(elapsedRef.current);
+            elapsedRef.current = null;
+        }
+    };
 
     const startScanJob = async () => {
         if (jobBusy || rootFolders.length === 0) return;
         setJobBusy(true);
         setJob(null);
         setIndexedFiles([]);
+        pollFailures.current = 0;
+
+        const t0 = Date.now();
+        setScanStartTime(t0);
+        setElapsed(0);
+        setDebugLog(['Starting scan…']);
+        setLastPollTime('');
+
+        stopElapsedTimer();
+        elapsedRef.current = setInterval(() => {
+            setElapsed(Math.round((Date.now() - t0) / 1000));
+        }, 1000);
+
         try {
             const { job_id } = await window.wispApi.startScanJob(rootFolders);
             setJob({
@@ -121,6 +154,8 @@ export default function ScanView({
             timerRef.current = setInterval(async () => {
                 try {
                     const data = await window.wispApi.pollJob(job_id);
+                    pollFailures.current = 0;
+                    setLastPollTime(new Date().toLocaleTimeString());
                     setJob({
                         job_id: data.job_id,
                         status: data.status,
@@ -129,22 +164,39 @@ export default function ScanView({
                         progress_message: data.progress_message,
                     });
 
+                    if (data.progress_message) {
+                        setDebugLog(prev => {
+                            const next = [...prev, data.progress_message];
+                            return next.length > 20 ? next.slice(-20) : next;
+                        });
+                    }
+
                     if (data.status === 'success' || data.status === 'failed') {
                         if (timerRef.current) clearInterval(timerRef.current);
                         timerRef.current = null;
+                        stopElapsedTimer();
                         setJobBusy(false);
                         if (data.status === 'success') {
                             fetchIndexedFiles(job_id);
                             setShowFiles(true);
                         }
                     }
-                } catch {
-                    // keep polling
+                } catch (e: any) {
+                    pollFailures.current += 1;
+                    if (pollFailures.current >= MAX_POLL_FAILURES) {
+                        if (timerRef.current) clearInterval(timerRef.current);
+                        timerRef.current = null;
+                        stopElapsedTimer();
+                        setJobBusy(false);
+                        onError(`Poll failed after ${MAX_POLL_FAILURES} attempts: ${e?.message ?? e}`);
+                    }
                 }
             }, 1000);
-        } catch {
+        } catch (e: any) {
             setJobBusy(false);
             setJob(null);
+            stopElapsedTimer();
+            onError(`Scan failed: ${e?.message ?? e}`);
         }
     };
 
@@ -199,12 +251,6 @@ export default function ScanView({
                     <span className="scan-action-desc">Embed files via AI pipeline</span>
                 </button>
 
-                <button className="scan-action-card" onClick={() => onScan(rootFolders[0])} disabled={!!busy || jobBusy}>
-                    <div className="scan-action-icon"><RefreshCw size={16} /></div>
-                    <span className="scan-action-title">Rescan</span>
-                    <span className="scan-action-desc">Refresh file index</span>
-                </button>
-
                 <button className="scan-action-card" onClick={onOrganize} disabled={!!busy || jobBusy}>
                     <div className="scan-action-icon"><Wand2 size={16} /></div>
                     <span className="scan-action-title">Organize</span>
@@ -248,6 +294,9 @@ export default function ScanView({
                                 {job.progress_current} / {job.progress_total}
                             </span>
                         )}
+                        {pct > 0 && (
+                            <span className="job-progress-pct">{pct}%</span>
+                        )}
                     </div>
 
                     <div className="job-progress-track">
@@ -257,8 +306,59 @@ export default function ScanView({
                         />
                     </div>
 
-                    <div className="job-progress-message">
-                        {job.progress_message || '\u2014'}
+                    <div className="job-progress-footer">
+                        <span className="job-progress-message">
+                            {job.progress_message || '\u2014'}
+                        </span>
+                        {scanStartTime && (
+                            <span className="job-progress-elapsed">
+                                Elapsed: {elapsed}s
+                            </span>
+                        )}
+                    </div>
+
+                    {/* ── Debug / Truth Panel (collapsible) ── */}
+                    <div className="debug-panel">
+                        <div
+                            className="debug-panel-toggle"
+                            onClick={() => setShowDebug(v => !v)}
+                        >
+                            Debug {showDebug ? '▾' : '▸'}
+                        </div>
+                        {showDebug && (
+                            <div className="debug-panel-body">
+                                <div className="debug-row">
+                                    <span className="debug-label">Job ID</span>
+                                    <span className="debug-value">{job.job_id}</span>
+                                </div>
+                                <div className="debug-row">
+                                    <span className="debug-label">Folders</span>
+                                    <span className="debug-value">{rootFolders.join(', ')}</span>
+                                </div>
+                                <div className="debug-row">
+                                    <span className="debug-label">Status</span>
+                                    <span className="debug-value">{job.status}</span>
+                                </div>
+                                <div className="debug-row">
+                                    <span className="debug-label">Progress</span>
+                                    <span className="debug-value">{job.progress_current}/{job.progress_total}</span>
+                                </div>
+                                <div className="debug-row">
+                                    <span className="debug-label">Last poll</span>
+                                    <span className="debug-value">{lastPollTime || '—'}</span>
+                                </div>
+                                {debugLog.length > 0 && (
+                                    <div className="debug-log">
+                                        <span className="debug-label">Log</span>
+                                        <div className="debug-log-entries">
+                                            {debugLog.map((msg, i) => (
+                                                <div key={i} className="debug-log-entry">{msg}</div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
@@ -283,22 +383,11 @@ export default function ScanView({
                 </div>
             )}
 
-            {/* ── Pipeline stats (from Electron scan, if any) ── */}
-            {pipeline.indexed > 0 && indexedFiles.length === 0 && (
-                <div className="scan-stats">
-                    {[
-                        { label: 'Indexed', value: pipeline.indexed },
-                        { label: 'Previewed', value: pipeline.previewed },
-                        { label: 'Embedded', value: pipeline.embedded },
-                        { label: 'Scored', value: pipeline.scored },
-                    ].map((s) => (
-                        <div className="scan-stat" key={s.label}>
-                            <span className="scan-stat-value">
-                                {s.value > 0 ? s.value.toLocaleString() : '\u2014'}
-                            </span>
-                            <span className="scan-stat-label">{s.label}</span>
-                        </div>
-                    ))}
+            {/* ── Empty prompt — no job has run yet ── */}
+            {!job && indexedFiles.length === 0 && taggedFiles.length === 0 && (
+                <div className="scan-empty-prompt">
+                    <Search size={18} style={{ color: 'var(--text-faint)' }} />
+                    <span>Run <strong>Scan &amp; Index</strong> to analyze your files with the AI pipeline.</span>
                 </div>
             )}
 
@@ -348,6 +437,14 @@ export default function ScanView({
                                     {file.file_path}
                                 </div>
                             </div>
+                            <button
+                                className="file-item-open"
+                                aria-label={`Open ${file.name}`}
+                                onClick={() => handleOpenFile(file.file_path)}
+                            >
+                                <FolderOpen size={13} />
+                                Open
+                            </button>
                         </div>
                     ))}
                     {indexedFiles.length > 100 && showFiles && (

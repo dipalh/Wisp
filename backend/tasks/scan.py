@@ -14,9 +14,14 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
+import sys
 import time
 import traceback
 from pathlib import Path
+
+_backend_dir = str(Path(__file__).resolve().parent.parent)
+if _backend_dir not in sys.path:
+    sys.path.insert(0, _backend_dir)
 
 from celery_app import app
 from services.job_db import (
@@ -36,6 +41,11 @@ async def _run_pipeline(job_id: str, all_files: list[Path]) -> int:
 
     Returns the count of successfully indexed files.
     """
+    import sys as _sys
+    _bd = str(Path(__file__).resolve().parent.parent)
+    if _bd not in _sys.path:
+        _sys.path.insert(0, _bd)
+
     from services.embedding import pipeline
     from services.os_tags.deletable import should_mark_deletable, set_deletable
 

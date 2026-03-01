@@ -17,4 +17,6 @@ contextBridge.exposeInMainWorld('wispApi', {
   startScanJob: (folders) => ipcRenderer.invoke('jobs:startScan', folders),
   pollJob: (jobId) => ipcRenderer.invoke('jobs:poll', jobId),
   getIndexedFiles: (jobId) => ipcRenderer.invoke('jobs:indexedFiles', jobId),
+  openFile: (filePath) => ipcRenderer.invoke('file:open', filePath),
+  searchMemory: (query, opts) => ipcRenderer.invoke('memory:search', query, opts),
 });

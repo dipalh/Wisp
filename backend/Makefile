@@ -10,7 +10,8 @@ TESTS = tests/test_job_db.py \
         tests/test_tagging_correctness.py \
         tests/test_sqlite_robustness.py \
         tests/test_pipeline_no_tag.py \
-        tests/test_integration_scan.py
+        tests/test_integration_scan.py \
+        tests/test_search_api.py
 
 test:
 	python -m pytest $(TESTS) -q

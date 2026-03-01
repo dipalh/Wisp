@@ -588,6 +588,30 @@ ipcMain.handle('jobs:indexedFiles', async (_, jobId) => {
   return resp.json(); // { files: [...], total: N }
 });
 
+ipcMain.handle('file:open', async (_, filePath) => {
+  if (!filePath) throw new Error('filePath is required');
+  if (!fssync.existsSync(filePath)) throw new Error(`File not found: ${filePath}`);
+  shell.showItemInFolder(filePath);
+  return { ok: true };
+});
+
+ipcMain.handle('memory:search', async (_, query, opts) => {
+  const k = opts?.k ?? 10;
+  const ext = opts?.ext ?? null;
+  const body = { query, k };
+  if (ext) body.ext = ext;
+  const resp = await fetch(`${apiUrl}/api/v1/search`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const detail = await resp.text().catch(() => '');
+    throw new Error(`Search failed (HTTP ${resp.status}): ${detail}`);
+  }
+  return resp.json(); // { results: [...], query, total }
+});
+
 app.whenReady().then(() => {
   createWindow();
   app.on('activate', () => {

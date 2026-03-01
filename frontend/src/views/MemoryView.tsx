@@ -1,33 +1,59 @@
-import { useState, useMemo } from 'react';
-import { Search, FileText, Tag } from 'lucide-react';
-import type { TaggedFile } from '../components/AppShell';
+import { useState, useCallback, FormEvent } from 'react';
+import { Search, FileText, FolderOpen, Loader2 } from 'lucide-react';
 
-type MemoryViewProps = {
-    taggedFiles: TaggedFile[];
-    hasRoot: boolean;
-    onTagFiles: () => void;
-    busy: string;
+const DEPTH_LABELS: Record<string, string> = {
+    deep: 'Full',
+    preview: 'Preview',
+    card: 'Card',
 };
 
-export default function MemoryView({
-    taggedFiles,
-    hasRoot,
-    onTagFiles,
-    busy,
-}: MemoryViewProps) {
-    const [query, setQuery] = useState('');
+const DEPTH_COLORS: Record<string, string> = {
+    deep: 'var(--accent)',
+    preview: '#d69e2e',
+    card: 'var(--text-faint)',
+};
 
-    const results = useMemo(() => {
-        if (!query.trim()) return taggedFiles.slice(0, 30);
-        const q = query.toLowerCase();
-        return taggedFiles
-            .filter(
-                (f) =>
-                    f.name.toLowerCase().includes(q) ||
-                    f.tags.some((t) => t.includes(q))
-            )
-            .slice(0, 60);
-    }, [taggedFiles, query]);
+type MemoryViewProps = {
+    hasRoot: boolean;
+    onError: (message: string) => void;
+};
+
+export default function MemoryView({ hasRoot, onError }: MemoryViewProps) {
+    const [query, setQuery] = useState('');
+    const [results, setResults] = useState<SearchResult[]>([]);
+    const [searching, setSearching] = useState(false);
+    const [searchedQuery, setSearchedQuery] = useState<string | null>(null);
+
+    const handleSearch = useCallback(async () => {
+        const trimmed = query.trim();
+        if (!trimmed) return;
+
+        setSearching(true);
+        setResults([]);
+        setSearchedQuery(null);
+        try {
+            const data = await window.wispApi.searchMemory(trimmed, { k: 10 });
+            setResults(data.results);
+            setSearchedQuery(trimmed);
+        } catch (e: any) {
+            onError(`Search failed: ${e?.message ?? e}`);
+        } finally {
+            setSearching(false);
+        }
+    }, [query, onError]);
+
+    const handleSubmit = (e: FormEvent) => {
+        e.preventDefault();
+        handleSearch();
+    };
+
+    const handleOpenFile = async (filePath: string) => {
+        try {
+            await window.wispApi.openFile(filePath);
+        } catch (e: any) {
+            onError(`Open failed: ${e?.message ?? e}`);
+        }
+    };
 
     if (!hasRoot) {
         return (
@@ -43,61 +69,88 @@ export default function MemoryView({
 
     return (
         <div className="memory-container">
-            <div className="memory-search-bar">
+            <form className="memory-search-bar" onSubmit={handleSubmit}>
                 <Search size={18} className="memory-search-icon" />
                 <input
                     type="text"
                     className="memory-search-input"
-                    placeholder="Search files by name or tag..."
+                    placeholder="Search your files by meaning..."
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                 />
-            </div>
+                <button
+                    type="submit"
+                    className="btn btn-primary memory-search-btn"
+                    disabled={searching}
+                    aria-label="Search"
+                >
+                    {searching ? <Loader2 size={14} className="spin" /> : <Search size={14} />}
+                    Search
+                </button>
+            </form>
 
-            {taggedFiles.length === 0 && (
-                <div className="empty-state">
-                    <Tag size={36} className="empty-state-icon" />
-                    <h3 className="empty-state-title">No tags generated yet</h3>
-                    <p className="empty-state-desc">
-                        Generate tags to search your files by meaning, not just filenames.
-                    </p>
-                    <button className="btn btn-primary" onClick={onTagFiles} disabled={!!busy} style={{ marginTop: 'var(--sp-4)' }}>
-                        <Tag size={16} />
-                        Generate tags
-                    </button>
+            {searching && (
+                <div className="memory-loading">
+                    <Loader2 size={18} className="spin" />
+                    Searching...
                 </div>
             )}
 
-            {taggedFiles.length > 0 && (
+            {searchedQuery !== null && !searching && results.length > 0 && (
+                <div className="memory-results-header">
+                    {results.length} result{results.length !== 1 ? 's' : ''} for &ldquo;{searchedQuery}&rdquo;
+                </div>
+            )}
+
+            {searchedQuery !== null && !searching && results.length === 0 && (
+                <div className="memory-no-results">
+                    No results found for &ldquo;{searchedQuery}&rdquo;
+                </div>
+            )}
+
+            {results.length > 0 && (
                 <div className="memory-results">
-                    {results.length === 0 && query.trim() && (
-                        <div className="empty-state">
-                            <p className="empty-state-desc">No files match "{query}"</p>
-                        </div>
-                    )}
-                    {results.map((file) => (
-                        <div className="memory-result-card" key={file.path} title={file.path}>
-                            <FileText size={20} className="memory-result-icon" />
-                            <div className="memory-result-body">
-                                <div className="memory-result-name">{file.name}</div>
-                                <div className="memory-result-tags">
-                                    {file.tags.slice(0, 6).map((tag) => (
-                                        <span className="tag" key={tag}>{tag}</span>
-                                    ))}
-                                    {file.tags.length > 6 && (
-                                        <span className="tag" style={{ color: 'var(--text-disabled)' }}>
-                                            +{file.tags.length - 6}
+                    {results.map((hit) => {
+                        const fileName = hit.file_path.split('/').pop() || hit.file_id;
+                        return (
+                            <div className="memory-result-card" key={`${hit.file_id}-${hit.score}`}>
+                                <FileText size={20} className="memory-result-icon" />
+                                <div className="memory-result-body">
+                                    <div className="memory-result-name">
+                                        {fileName}
+                                        <span
+                                            className="tag"
+                                            style={{
+                                                fontSize: 10,
+                                                marginLeft: 6,
+                                                color: DEPTH_COLORS[hit.depth] || 'var(--text-faint)',
+                                                borderColor: DEPTH_COLORS[hit.depth] || 'var(--border)',
+                                            }}
+                                        >
+                                            {DEPTH_LABELS[hit.depth] || hit.depth}
                                         </span>
-                                    )}
+                                    </div>
+                                    <div className="memory-result-score">
+                                        Score: {hit.score.toFixed(2)}
+                                    </div>
+                                    <div className="memory-result-snippet">
+                                        &ldquo;{hit.snippet}&rdquo;
+                                    </div>
+                                    <div className="memory-result-path">
+                                        {hit.file_path}
+                                    </div>
                                 </div>
+                                <button
+                                    className="file-item-open"
+                                    aria-label={`Open ${fileName}`}
+                                    onClick={() => handleOpenFile(hit.file_path)}
+                                >
+                                    <FolderOpen size={13} />
+                                    Open
+                                </button>
                             </div>
-                        </div>
-                    ))}
-                    {results.length > 0 && (
-                        <div style={{ fontSize: 'var(--text-muted)', color: 'var(--text-tertiary)', textAlign: 'center', padding: 'var(--sp-3)' }}>
-                            Showing {results.length} of {taggedFiles.length} files
-                        </div>
-                    )}
+                        );
+                    })}
                 </div>
             )}
         </div>

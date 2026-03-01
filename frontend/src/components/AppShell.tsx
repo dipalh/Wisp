@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import Sidebar from './Sidebar';
 import ContextPanel from './ContextPanel';
+import ErrorBanner from './ErrorBanner';
 import ScanView from '../views/ScanView';
 import CleanView from '../views/CleanView';
 import VisualizeView from '../views/VisualizeView';
@@ -87,41 +88,42 @@ export default function AppShell() {
     // Recent files for context panel
     const [recentFiles, setRecentFiles] = useState<{ name: string; path: string }[]>([]);
 
+    // Global error banner
+    const [error, setError] = useState<string | null>(null);
+    const onError = useCallback((msg: string) => setError(msg), []);
+    const dismissError = useCallback(() => setError(null), []);
+
     // --- Handlers ---
     const addFolder = async () => {
-        const picked = await window.wispApi.pickFolder();
-        if (!picked || rootFolders.includes(picked)) return;
-        setRootFolders((prev) => [...prev, picked]);
-        setBusy('Scanning...');
-        setStatusText('Scanning folder...');
+        try {
+            const picked = await window.wispApi.pickFolder();
+            if (!picked || rootFolders.includes(picked)) return;
+            setRootFolders((prev) => [...prev, picked]);
+            setBusy('Scanning...');
+            setStatusText('Scanning folder...');
 
-        const scanned = await window.wispApi.scanFolder(picked);
-        setTree(scanned);
-        setFocusPath(scanned?.path ?? '');
+            const scanned = await window.wispApi.scanFolder(picked);
+            setTree(scanned);
+            setFocusPath(scanned?.path ?? '');
 
-        // Count files for pipeline
-        let count = 0;
-        const countFiles = (node: TreeNode) => {
-            if (node.type === 'file') count++;
-            node.children?.forEach(countFiles);
-        };
-        if (scanned) countFiles(scanned);
+            let count = 0;
+            const recent: { name: string; path: string }[] = [];
+            const walk = (node: TreeNode) => {
+                if (node.type === 'file') {
+                    count++;
+                    if (recent.length < 10) recent.push({ name: node.name, path: node.path });
+                }
+                node.children?.forEach(walk);
+            };
+            if (scanned) walk(scanned);
+            setRecentFiles(recent);
 
-        setPipeline((prev) => ({ ...prev, indexed: count, total: count }));
-
-        // Track recent files
-        const recent: { name: string; path: string }[] = [];
-        const collect = (node: TreeNode) => {
-            if (node.type === 'file' && recent.length < 10) {
-                recent.push({ name: node.name, path: node.path });
-            }
-            node.children?.forEach(collect);
-        };
-        if (scanned) collect(scanned);
-        setRecentFiles(recent);
-
-        setBusy('');
-        setStatusText(`Indexed ${count} files`);
+            setBusy('');
+            setStatusText(`Found ${count} files`);
+        } catch (e: any) {
+            setBusy('');
+            onError(`Add folder failed: ${e?.message ?? e}`);
+        }
     };
 
     const removeFolder = (folder: string) => {
@@ -135,65 +137,88 @@ export default function AppShell() {
     };
 
     const handleScan = async (folder: string) => {
-        setBusy('Scanning...');
-        setStatusText('Rescanning...');
-        const scanned = await window.wispApi.scanFolder(folder);
-        setTree(scanned);
-        if (scanned && !focusPath) setFocusPath(scanned.path);
+        try {
+            setBusy('Scanning...');
+            setStatusText('Rescanning...');
+            const scanned = await window.wispApi.scanFolder(folder);
+            setTree(scanned);
+            if (scanned && !focusPath) setFocusPath(scanned.path);
 
-        let count = 0;
-        const cnt = (node: TreeNode) => { if (node.type === 'file') count++; node.children?.forEach(cnt); };
-        if (scanned) cnt(scanned);
-        setPipeline((prev) => ({ ...prev, indexed: count, total: count }));
+            let count = 0;
+            const cnt = (node: TreeNode) => { if (node.type === 'file') count++; node.children?.forEach(cnt); };
+            if (scanned) cnt(scanned);
 
-        setBusy('');
-        setStatusText(`Indexed ${count} files`);
+            setBusy('');
+            setStatusText(`Found ${count} files`);
+        } catch (e: any) {
+            setBusy('');
+            onError(`Rescan failed: ${e?.message ?? e}`);
+        }
     };
 
     const handleSuggestDelete = async () => {
         if (rootFolders.length === 0) return;
-        setBusy('Finding suggestions...');
-        const result = await window.wispApi.suggestDelete(rootFolders[0]);
-        setSuggestions(result);
-        setSwipeIndex(0);
-        setBusy('');
-        setStatusText(`Found ${result.length} cleanup suggestions`);
-        setActiveView('clean');
+        try {
+            setBusy('Finding suggestions...');
+            const result = await window.wispApi.suggestDelete(rootFolders[0]);
+            setSuggestions(result);
+            setSwipeIndex(0);
+            setBusy('');
+            setStatusText(`Found ${result.length} cleanup suggestions`);
+            setActiveView('clean');
+        } catch (e: any) {
+            setBusy('');
+            onError(`Suggest delete failed: ${e?.message ?? e}`);
+        }
     };
 
     const handleSwipe = async (decision: 'keep' | 'delete') => {
         const current = suggestions[swipeIndex];
         if (!current) return;
-        if (decision === 'delete') {
-            await window.wispApi.trashPath(current.path);
-        }
-        const next = swipeIndex + 1;
-        setSwipeIndex(next);
-        if (next >= suggestions.length) {
-            setStatusText('Cleanup review complete');
-            if (rootFolders[0]) handleScan(rootFolders[0]);
+        try {
+            if (decision === 'delete') {
+                await window.wispApi.trashPath(current.path);
+            }
+            const next = swipeIndex + 1;
+            setSwipeIndex(next);
+            if (next >= suggestions.length) {
+                setStatusText('Cleanup review complete');
+                if (rootFolders[0]) handleScan(rootFolders[0]);
+            }
+        } catch (e: any) {
+            onError(`Trash failed: ${e?.message ?? e}`);
         }
     };
 
     const handleOrganize = async () => {
         if (rootFolders.length === 0) return;
-        setBusy('Organizing...');
-        const result = await window.wispApi.organizeFolder(rootFolders[0]);
-        if (rootFolders[0]) await handleScan(rootFolders[0]);
-        setBusy('');
-        setStatusText(`Moved ${result.moved} files`);
+        try {
+            setBusy('Organizing...');
+            const result = await window.wispApi.organizeFolder(rootFolders[0]);
+            if (rootFolders[0]) await handleScan(rootFolders[0]);
+            setBusy('');
+            setStatusText(`Moved ${result.moved} files`);
+        } catch (e: any) {
+            setBusy('');
+            onError(`Organize failed: ${e?.message ?? e}`);
+        }
     };
 
     const handleTagFiles = async (provider: 'local' | 'api') => {
         if (rootFolders.length === 0) return;
-        setBusy('Generating tags...');
-        const result = await window.wispApi.tagFiles({
-            rootPath: rootFolders[0],
-            provider,
-        });
-        setTaggedFiles(result);
-        setBusy('');
-        setStatusText(`Tagged ${result.length} files`);
+        try {
+            setBusy('Generating tags...');
+            const result = await window.wispApi.tagFiles({
+                rootPath: rootFolders[0],
+                provider,
+            });
+            setTaggedFiles(result);
+            setBusy('');
+            setStatusText(`Tagged ${result.length} files`);
+        } catch (e: any) {
+            setBusy('');
+            onError(`Tag generation failed: ${e?.message ?? e}`);
+        }
     };
 
     // --- Render active view ---
@@ -204,13 +229,12 @@ export default function AppShell() {
                     <ScanView
                         rootFolders={rootFolders}
                         onAddFolder={addFolder}
-                        onScan={handleScan}
                         onOrganize={handleOrganize}
                         onSuggestDelete={handleSuggestDelete}
                         onTagFiles={handleTagFiles}
-                        pipeline={pipeline}
                         taggedFiles={taggedFiles}
                         busy={busy}
+                        onError={onError}
                     />
                 );
             case 'clean':
@@ -237,10 +261,8 @@ export default function AppShell() {
             case 'memory':
                 return (
                     <MemoryView
-                        taggedFiles={taggedFiles}
                         hasRoot={rootFolders.length > 0}
-                        onTagFiles={() => handleTagFiles('local')}
-                        busy={busy}
+                        onError={onError}
                     />
                 );
             case 'assistant':
@@ -264,6 +286,8 @@ export default function AppShell() {
                     <span className="main-header-subtitle">{VIEW_SUBTITLES[activeView]}</span>
                 </div>
 
+                <ErrorBanner message={error} onDismiss={dismissError} />
+
                 <div className="main-content">
                     <div className="main-content-inner">
                         {renderView()}
@@ -271,7 +295,7 @@ export default function AppShell() {
                 </div>
 
                 <div className="main-status">
-                    <span className={`status-dot ${busy ? 'busy' : pipeline.indexed > 0 ? '' : 'idle'}`} />
+                    <span className={`status-dot ${busy ? 'busy' : rootFolders.length > 0 ? '' : 'idle'}`} />
                     <span>{busy || statusText}</span>
                 </div>
             </div>
