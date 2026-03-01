@@ -1,6 +1,8 @@
 const { contextBridge, ipcRenderer } = require('electron');
+const os = require('node:os');
 
 contextBridge.exposeInMainWorld('wispApi', {
+  getUsername: () => os.userInfo().username,
   pickFolder: () => ipcRenderer.invoke('folder:pick'),
   scanFolder: (folderPath) => ipcRenderer.invoke('folder:scan', folderPath),
   organizeFolder: (folderPath) => ipcRenderer.invoke('folder:organize', folderPath),
