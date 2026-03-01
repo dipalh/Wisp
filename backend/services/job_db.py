@@ -1,7 +1,15 @@
 """
 SQLite-backed job store for long-running Celery tasks.
 
-Database: wisp_jobs.db (created next to this file, inside backend/services/)
+Database: wisp_jobs.db (created in the backend/ directory)
+
+Connection policy
+-----------------
+  Every public function opens a fresh connection and closes it before
+  returning.  This is safe when FastAPI (async thread-pool) and Celery
+  workers (separate processes) both write concurrently.
+
+  WAL mode is enabled so readers never block writers.
 
 Public API
 ----------
@@ -14,111 +22,139 @@ Public API
 from __future__ import annotations
 
 import sqlite3
-import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
 _DB_PATH = Path(__file__).resolve().parent.parent / "wisp_jobs.db"
-_local = threading.local()
 
 
-def _conn() -> sqlite3.Connection:
-    """Return a per-thread SQLite connection (thread-safe)."""
-    conn = getattr(_local, "conn", None)
-    if conn is None:
-        conn = sqlite3.connect(str(_DB_PATH), check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        _local.conn = conn
+def _db_path() -> str:
+    """Return the database path as a string.  Indirection allows tests
+    to monkey-patch ``_DB_PATH``."""
+    return str(_DB_PATH)
+
+
+def _connect() -> sqlite3.Connection:
+    """Open a **new** connection with WAL mode and row_factory."""
+    conn = sqlite3.connect(_db_path(), timeout=5)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
     return conn
-
-
-def ensure_table() -> None:
-    """Create the jobs table if it doesn't exist (idempotent)."""
-    _conn().execute("""
-        CREATE TABLE IF NOT EXISTS jobs (
-            job_id           TEXT PRIMARY KEY,
-            type             TEXT NOT NULL,
-            status           TEXT NOT NULL DEFAULT 'queued',
-            progress_current INTEGER NOT NULL DEFAULT 0,
-            progress_total   INTEGER NOT NULL DEFAULT 0,
-            progress_message TEXT NOT NULL DEFAULT '',
-            created_at       TEXT NOT NULL,
-            updated_at       TEXT NOT NULL
-        )
-    """)
-    _conn().commit()
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# ── Schema ────────────────────────────────────────────────────────────
+
+
+def ensure_table() -> None:
+    """Create the jobs table if it doesn't exist (idempotent)."""
+    conn = _connect()
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS jobs (
+                job_id           TEXT PRIMARY KEY,
+                type             TEXT NOT NULL,
+                status           TEXT NOT NULL DEFAULT 'queued',
+                progress_current INTEGER NOT NULL DEFAULT 0,
+                progress_total   INTEGER NOT NULL DEFAULT 0,
+                progress_message TEXT NOT NULL DEFAULT '',
+                created_at       TEXT NOT NULL,
+                updated_at       TEXT NOT NULL
+            )
+        """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ── CRUD ──────────────────────────────────────────────────────────────
+
+
 def create_job(job_id: str, job_type: str) -> None:
     """Insert a new job row with status='queued'."""
     now = _now()
-    _conn().execute(
-        """
-        INSERT INTO jobs (job_id, type, status, progress_current, progress_total,
-                          progress_message, created_at, updated_at)
-        VALUES (?, ?, 'queued', 0, 0, '', ?, ?)
-        """,
-        (job_id, job_type, now, now),
-    )
-    _conn().commit()
+    conn = _connect()
+    try:
+        conn.execute(
+            """
+            INSERT INTO jobs (job_id, type, status, progress_current, progress_total,
+                              progress_message, created_at, updated_at)
+            VALUES (?, ?, 'queued', 0, 0, '', ?, ?)
+            """,
+            (job_id, job_type, now, now),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_job(job_id: str) -> dict | None:
     """Return full job row as a dict, or None if not found."""
-    row = _conn().execute(
-        "SELECT * FROM jobs WHERE job_id = ?", (job_id,)
-    ).fetchone()
-    if row is None:
-        return None
-    return dict(row)
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT * FROM jobs WHERE job_id = ?", (job_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        return dict(row)
+    finally:
+        conn.close()
 
 
 def update_progress(
     job_id: str, current: int, total: int, message: str
 ) -> None:
     """Update progress fields + updated_at."""
-    _conn().execute(
-        """
-        UPDATE jobs
-        SET progress_current = ?,
-            progress_total   = ?,
-            progress_message = ?,
-            updated_at       = ?
-        WHERE job_id = ?
-        """,
-        (current, total, message, _now(), job_id),
-    )
-    _conn().commit()
-
-
-def set_status(job_id: str, status: str, message: str = "") -> None:
-    """Update status (and optionally progress_message) + updated_at."""
-    if message:
-        _conn().execute(
+    conn = _connect()
+    try:
+        conn.execute(
             """
             UPDATE jobs
-            SET status           = ?,
+            SET progress_current = ?,
+                progress_total   = ?,
                 progress_message = ?,
                 updated_at       = ?
             WHERE job_id = ?
             """,
-            (status, message, _now(), job_id),
+            (current, total, message, _now(), job_id),
         )
-    else:
-        _conn().execute(
-            """
-            UPDATE jobs
-            SET status     = ?,
-                updated_at = ?
-            WHERE job_id = ?
-            """,
-            (status, _now(), job_id),
-        )
-    _conn().commit()
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def set_status(job_id: str, status: str, message: str = "") -> None:
+    """Update status (and optionally progress_message) + updated_at."""
+    conn = _connect()
+    try:
+        if message:
+            conn.execute(
+                """
+                UPDATE jobs
+                SET status           = ?,
+                    progress_message = ?,
+                    updated_at       = ?
+                WHERE job_id = ?
+                """,
+                (status, message, _now(), job_id),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE jobs
+                SET status     = ?,
+                    updated_at = ?
+                WHERE job_id = ?
+                """,
+                (status, _now(), job_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # Auto-create table on import
