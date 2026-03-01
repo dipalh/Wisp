@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { X, Loader2, CheckCircle2, XCircle } from 'lucide-react';
+import { X, Loader2, CheckCircle2, XCircle, FolderSearch, Zap, FileText } from 'lucide-react';
 
 type JobState = {
     job_id: string;
@@ -22,6 +22,7 @@ export default function ScanModal({ open, rootFolders, onClose, onError, onCompl
     const [elapsed, setElapsed] = useState(0);
     const [logs, setLogs] = useState<string[]>([]);
     const [started, setStarted] = useState(false);
+    const [filesProcessed, setFilesProcessed] = useState(0);
     const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const elapsedRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const logsEndRef = useRef<HTMLDivElement>(null);
@@ -42,7 +43,8 @@ export default function ScanModal({ open, rootFolders, onClose, onError, onCompl
         setStarted(true);
         setJob(null);
         setElapsed(0);
-        setLogs(['Starting scan...']);
+        setFilesProcessed(0);
+        setLogs(['Initializing scan pipeline...']);
 
         const t0 = Date.now();
         elapsedRef.current = setInterval(() => {
@@ -53,7 +55,7 @@ export default function ScanModal({ open, rootFolders, onClose, onError, onCompl
             try {
                 const { job_id } = await window.wispApi.startScanJob(rootFolders);
                 setJob({ job_id, status: 'queued', progress_current: 0, progress_total: 0, progress_message: 'Queued...' });
-                setLogs(prev => [...prev, `Job ${job_id.slice(0, 8)} created`]);
+                setLogs(prev => [...prev, `Job ${job_id.slice(0, 8)} created`, 'Waiting for worker...']);
 
                 timerRef.current = setInterval(async () => {
                     try {
@@ -65,6 +67,7 @@ export default function ScanModal({ open, rootFolders, onClose, onError, onCompl
                             progress_total: data.progress_total,
                             progress_message: data.progress_message,
                         });
+                        setFilesProcessed(data.progress_current || 0);
                         if (data.progress_message) {
                             setLogs(prev => {
                                 const next = [...prev, data.progress_message];
@@ -111,13 +114,14 @@ export default function ScanModal({ open, rootFolders, onClose, onError, onCompl
     return (
         <div className="modal-overlay" onClick={isDone ? handleClose : undefined}>
             <div className="modal-content scan-modal" onClick={e => e.stopPropagation()}>
+                {/* Header */}
                 <div className="modal-header">
                     <h3 className="modal-title">
-                        {job?.status === 'success' && <CheckCircle2 size={18} className="modal-icon-success" />}
-                        {job?.status === 'failed' && <XCircle size={18} className="modal-icon-error" />}
-                        {(!isDone) && <Loader2 size={18} className="spin" />}
+                        {job?.status === 'success' && <CheckCircle2 size={20} className="modal-icon-success" />}
+                        {job?.status === 'failed' && <XCircle size={20} className="modal-icon-error" />}
+                        {(!isDone) && <Loader2 size={20} className="spin" />}
                         {job?.status === 'success' ? 'Scan Complete' :
-                         job?.status === 'failed' ? 'Scan Failed' : 'Scanning...'}
+                         job?.status === 'failed' ? 'Scan Failed' : 'Scanning Files...'}
                     </h3>
                     {isDone && (
                         <button className="modal-close" onClick={handleClose}>
@@ -126,36 +130,73 @@ export default function ScanModal({ open, rootFolders, onClose, onError, onCompl
                     )}
                 </div>
 
+                {/* Stats row */}
+                <div className="scan-modal-stats-row">
+                    <div className="scan-modal-stat">
+                        <FolderSearch size={14} />
+                        <span className="scan-modal-stat-value">{rootFolders.length}</span>
+                        <span className="scan-modal-stat-label">Folders</span>
+                    </div>
+                    <div className="scan-modal-stat">
+                        <FileText size={14} />
+                        <span className="scan-modal-stat-value">{filesProcessed}</span>
+                        <span className="scan-modal-stat-label">Processed</span>
+                    </div>
+                    <div className="scan-modal-stat">
+                        <Zap size={14} />
+                        <span className="scan-modal-stat-value">{formatElapsed(elapsed)}</span>
+                        <span className="scan-modal-stat-label">Elapsed</span>
+                    </div>
+                </div>
+
+                {/* Progress */}
                 <div className="scan-modal-progress">
                     <div className="scan-modal-bar-track">
                         <div
-                            className={`scan-modal-bar-fill ${job?.status === 'failed' ? 'error' : ''}`}
+                            className={`scan-modal-bar-fill ${job?.status === 'failed' ? 'error' : ''} ${!isDone && pct > 0 ? 'animating' : ''}`}
                             style={{ width: `${isDone && job?.status === 'success' ? 100 : pct}%` }}
                         />
                     </div>
                     <div className="scan-modal-stats">
-                        <span>{pct}%</span>
+                        <span>{pct}% complete</span>
                         <span>{job?.progress_current ?? 0} / {job?.progress_total ?? '?'} files</span>
-                        <span>{formatElapsed(elapsed)}</span>
                     </div>
                 </div>
 
+                {/* Current operation message */}
                 <div className="scan-modal-message">
+                    <span className="scan-modal-message-dot" />
                     {job?.progress_message || 'Preparing...'}
                 </div>
 
+                {/* Log output */}
                 <div className="scan-modal-logs">
                     {logs.map((line, i) => (
-                        <div key={i} className="scan-modal-log-line">{line}</div>
+                        <div key={i} className={`scan-modal-log-line ${i === logs.length - 1 ? 'latest' : ''}`}>
+                            <span className="scan-modal-log-ts">{String(i + 1).padStart(3, ' ')}</span>
+                            {line}
+                        </div>
                     ))}
                     <div ref={logsEndRef} />
                 </div>
 
-                {isDone && (
+                {/* Footer */}
+                {isDone ? (
                     <div className="scan-modal-footer">
+                        {job?.status === 'success' && (
+                            <span className="scan-modal-footer-summary">
+                                Successfully indexed {job.progress_total} files in {formatElapsed(elapsed)}
+                            </span>
+                        )}
                         <button className="btn btn-primary" onClick={handleClose}>
-                            Done
+                            {job?.status === 'success' ? 'View Results' : 'Close'}
                         </button>
+                    </div>
+                ) : (
+                    <div className="scan-modal-footer">
+                        <span className="scan-modal-footer-hint">
+                            This may take a few minutes depending on the number of files...
+                        </span>
                     </div>
                 )}
             </div>

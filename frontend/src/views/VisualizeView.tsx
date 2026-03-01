@@ -171,7 +171,7 @@ export default function VisualizeView({
                                             <div className="viz-tooltip-meta">{formatBytes(item.size)}</div>
                                             <div className="viz-tooltip-meta">{pct.toFixed(1)}% of folder</div>
                                             <div className="viz-tooltip-kind">
-                                                {item.type === 'folder' ? 'Folder — click to open' : 'File'}
+                                                {item.type === 'folder' ? 'Folder (click to open)' : 'File'}
                                             </div>
                                         </div>
                                     );

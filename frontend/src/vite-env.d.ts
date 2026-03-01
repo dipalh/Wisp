@@ -63,6 +63,7 @@ interface AssistantResponse {
 }
 
 interface WispApi {
+  getUsername: () => string;
   pickFolder: () => Promise<string | null>;
   scanFolder: (folderPath: string) => Promise<TreeNode | null>;
   organizeFolder: (folderPath: string) => Promise<{ moved: number; skipped: number }>;

@@ -16,7 +16,7 @@ const WELCOME: Message = {
     id: 'welcome',
     role: 'assistant',
     content:
-        "I'm your file memory. Ask me anything about your indexed files — like **\"what PDFs do I have?\"**, **\"find my resume\"**, or **\"summarize the project files\"**.\n\nI search semantically, so describe what you're looking for in plain English.",
+        "I'm your file memory. Ask me anything about your indexed files, like **\"what PDFs do I have?\"**, **\"find my resume\"**, or **\"summarize the project files\"**.\n\nI search semantically, so describe what you're looking for in plain English.",
     timestamp: Date.now(),
 };
 
@@ -81,7 +81,7 @@ export default function MemoryView({ hasRoot, onError }: MemoryViewProps) {
             const errMsg: Message = {
                 id: `e-${Date.now()}`,
                 role: 'assistant',
-                content: `Something went wrong — make sure the backend is running.\n\n\`${e?.message ?? 'Unknown error'}\``,
+                content: `Something went wrong. Make sure the backend is running.\n\n\`${e?.message ?? 'Unknown error'}\``,
                 timestamp: Date.now(),
             };
             setMessages(prev => [...prev.filter(m => !m.thinking), errMsg]);

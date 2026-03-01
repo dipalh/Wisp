@@ -378,7 +378,8 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      sandbox: false
     }
   });
 
@@ -410,26 +411,42 @@ ipcMain.handle('folder:scan', async (_, rootPath) => {
 
 ipcMain.handle('folder:organize', async (_, rootPath) => {
   try {
-    const ingestResp = await fetch(
-      `${apiUrl}/api/v1/ingest/directory?path=${encodeURIComponent(rootPath)}`,
-      { method: 'POST' }
-    );
-    if (!ingestResp.ok) throw new Error(`Ingest HTTP ${ingestResp.status}`);
-    const { indexed } = await ingestResp.json();
+    // Fast local organize: move top-level files into category subfolders
+    const entries = await fs.readdir(rootPath, { withFileTypes: true });
+    const files = entries.filter(e => e.isFile() && !e.name.startsWith('.'));
 
-    const suggestResp = await fetch(`${apiUrl}/api/v1/organize/suggestions`);
-    if (!suggestResp.ok) throw new Error(`Suggest HTTP ${suggestResp.status}`);
-    const suggestions = await suggestResp.json();
+    let moved = 0;
+    let skipped = 0;
 
-    console.log('[organize] recommendation:', suggestions.recommendation);
-    suggestions.proposals?.forEach((p, i) =>
-      console.log(`  Proposal ${i + 1} (${p.name}): ${p.mappings?.length} file mappings`)
-    );
+    for (const file of files) {
+      const category = detectCategory(file.name);
+      const destDir = path.join(rootPath, category);
+      const src = path.join(rootPath, file.name);
+      const dest = path.join(destDir, file.name);
 
-    return { moved: indexed ?? 0, skipped: 0 };
+      // Don't move if already in the right place
+      if (src === dest) { skipped++; continue; }
+
+      try {
+        // Create category folder if it doesn't exist
+        await fs.mkdir(destDir, { recursive: true });
+        // Move the file
+        await fs.rename(src, dest);
+        moved++;
+      } catch (moveErr) {
+        console.warn(`[organize] could not move ${file.name}: ${moveErr.message}`);
+        skipped++;
+      }
+    }
+
+    // Invalidate tree cache for this folder
+    TREE_CACHE.delete(rootPath);
+
+    console.log(`[organize] done: ${moved} moved, ${skipped} skipped out of ${files.length} files`);
+    return { moved, skipped };
   } catch (err) {
     console.error('[organize] error:', err.message);
-    return { moved: 0, skipped: 0 };
+    return { moved: 0, skipped: 0, error: err.message };
   }
 })
 
@@ -624,6 +641,11 @@ ipcMain.handle('memory:search', async (_, query, opts) => {
     throw new Error(`Search failed (HTTP ${resp.status}): ${detail}`);
   }
   return resp.json(); // { results: [...], query, total }
+});
+
+ipcMain.on('app:getUsername', (event) => {
+  const os = require('node:os');
+  event.returnValue = os.userInfo().username;
 });
 
 app.whenReady().then(() => {

@@ -46,6 +46,8 @@ type ScanViewProps = {
     taggedFiles: TaggedFile[];
     busy: string;
     onError: (message: string) => void;
+    onOpenScanModal?: () => void;
+    completedJobId?: string | null;
 };
 
 const DEPTH_LABELS: Record<string, string> = {
@@ -71,6 +73,8 @@ export default function ScanView({
     taggedFiles,
     busy,
     onError,
+    onOpenScanModal,
+    completedJobId,
 }: ScanViewProps) {
     const hasRoot = rootFolders.length > 0;
 
@@ -98,6 +102,15 @@ export default function ScanView({
             if (elapsedRef.current) clearInterval(elapsedRef.current);
         };
     }, []);
+
+    /* When modal scan completes, fetch results */
+    useEffect(() => {
+        if (completedJobId) {
+            fetchIndexedFiles(completedJobId);
+            setShowFiles(true);
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [completedJobId]);
 
     const fetchIndexedFiles = async (jobId?: string) => {
         try {
@@ -223,7 +236,7 @@ export default function ScanView({
                 </div>
                 <h2 className="empty-state-title">Choose a folder to get started</h2>
                 <p className="empty-state-desc">
-                    Wisp will index, tag, and help you clean up your files — all locally on your machine.
+                    Wisp will index, tag, and help you clean up your files, all locally on your machine.
                 </p>
                 <button className="btn btn-primary" onClick={onAddFolder}>
                     <FolderPlus size={15} />
@@ -245,7 +258,7 @@ export default function ScanView({
                     <span className="scan-action-desc">Index another directory</span>
                 </button>
 
-                <button className="scan-action-card" onClick={startScanJob} disabled={!!busy || jobBusy}>
+                <button className="scan-action-card" onClick={() => { if (onOpenScanModal) onOpenScanModal(); else startScanJob(); }} disabled={!!busy || jobBusy}>
                     <div className="scan-action-icon"><Search size={16} /></div>
                     <span className="scan-action-title">Scan &amp; Index</span>
                     <span className="scan-action-desc">Embed files via AI pipeline</span>
@@ -345,7 +358,7 @@ export default function ScanView({
                                 </div>
                                 <div className="debug-row">
                                     <span className="debug-label">Last poll</span>
-                                    <span className="debug-value">{lastPollTime || '—'}</span>
+                                    <span className="debug-value">{lastPollTime || '-'}</span>
                                 </div>
                                 {debugLog.length > 0 && (
                                     <div className="debug-log">

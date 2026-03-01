@@ -24,7 +24,7 @@ const SAFETY_RULES: Array<{ pattern: RegExp; response: string }> = [
     {
         // Permanent deletion / data destruction
         pattern: /\bpermanent(ly)?\s+delet|hard.?delet|\bwipe\b|\bshred\b|\bdestroy\s+(all\s+)?(my\s+)?(files?|data|documents?)\b/i,
-        response: "For your safety, Wisp never permanently deletes files. Any cleanup moves files to a quarantine folder first — you can review and restore from there at any time. Head to the Clean view to see suggested candidates.",
+        response: "For your safety, Wisp never permanently deletes files. Any cleanup moves files to a quarantine folder first. You can review and restore from there at any time. Head to the Clean view to see suggested candidates.",
     },
     {
         // Format / wipe drives or disks
@@ -34,17 +34,17 @@ const SAFETY_RULES: Array<{ pattern: RegExp; response: string }> = [
     {
         // System / OS directories
         pattern: /\bsystem32\b|\\windows\\|\bprogram files\b|\/etc\/|\/usr\/|\/bin\/|\/sbin\/|\/system\/|\bappdata\\roaming\b/i,
-        response: "I can't touch system or application directories — only the personal folders you've added to Wisp. This keeps your operating system safe.",
+        response: "I can't touch system or application directories, only the personal folders you've added to Wisp. This keeps your operating system safe.",
     },
     {
         // Mass / bulk delete without review
         pattern: /\b(delete|remove|wipe|trash|purge)\s+(all|every(thing)?|each|the\s+entire|my\s+entire)\b/i,
-        response: "Mass deletions aren't something I'll do in one go. Wisp reviews each file individually — use the Clean view to go through suggestions one by one so nothing gets removed by accident.",
+        response: "Mass deletions aren't something I'll do in one go. Wisp reviews each file individually. Use the Clean view to go through suggestions one by one so nothing gets removed by accident.",
     },
     {
         // Destructive shell commands
         pattern: /\brm\s+-rf\b|\bdel\s+\/[fqs]\b|\bdeltree\b|\bformat\s+[a-z]:\b|\bmkfs\b/i,
-        response: "Shell commands like that are outside my scope. Wisp only proposes safe, reversible file moves — I won't help execute destructive terminal operations.",
+        response: "Shell commands like that are outside my scope. Wisp only proposes safe, reversible file moves. I won't help execute destructive terminal operations.",
     },
 ];
 
@@ -52,17 +52,17 @@ const NAVIGATION_RULES: Array<{ pattern: RegExp; response: string }> = [
     {
         // What is Wisp / what can you do
         pattern: /\b(what (is|are) wisp|what can (you|wisp) do|what (do you|does wisp) support|your features?|help me|getting started)\b/i,
-        response: "Wisp is an AI-powered file organizer. Here's what I can do:\n\n• **Scan & Index** — Pick a folder and embed its files so I can search and answer questions about them (Files tab → Scan & Index).\n• **Clean Up** — Review suggested junk files. Wisp moves them to quarantine, never permanently deletes.\n• **Visualize** — See a treemap of your folder sizes to spot what's taking up space.\n• **Extract Text** — Drop an image or PDF to pull out text via OCR, or drop an audio/video file to transcribe it.\n• **Assistant (here)** — Ask me anything about your indexed folders in plain English.",
+        response: "Wisp is an AI-powered file organizer. Here's what I can do:\n\n• **Scan & Index** - Pick a folder and embed its files so I can search and answer questions about them (Files tab > Scan & Index).\n• **Clean Up** - Review suggested junk files. Wisp moves them to quarantine, never permanently deletes.\n• **Visualize** - See a treemap of your folder sizes to spot what's taking up space.\n• **Extract Text** - Drop an image or PDF to pull out text via OCR, or drop an audio/video file to transcribe it.\n• **Assistant (here)** - Ask me anything about your indexed folders in plain English.",
     },
     {
         // Scan / index a folder
         pattern: /\b(how (do i|to) (scan|index)|scan a folder|add a folder|index a folder|how (do i|to) add)\b/i,
-        response: "To scan and index a folder:\n1. Go to **Files → Scan & Index** in the left sidebar.\n2. Click **Pick Folder** and choose a directory.\n3. Click **Scan & Index** — Wisp will embed your files into the search index.\n\nOnce indexed, you can ask me questions about any of those files.",
+        response: "To scan and index a folder:\n1. Go to **Files > Scan & Index** in the left sidebar.\n2. Click **Pick Folder** and choose a directory.\n3. Click **Scan & Index**. Wisp will embed your files into the search index.\n\nOnce indexed, you can ask me questions about any of those files.",
     },
     {
         // Clean up / junk / delete suggestions
         pattern: /\b(how (do i|to) (clean|find junk|remove junk|see (delete|cleanup) suggestions)|clean up (my )?files|junk files|what files (can|should) i delete)\b/i,
-        response: "To review cleanup suggestions:\n1. Go to **Files → Clean Up** in the sidebar.\n2. Wisp scores your files for junk likelihood based on name, age, and size.\n3. Click **Trash** on any candidate — it moves to your system Trash (recoverable), never permanent deletion.",
+        response: "To review cleanup suggestions:\n1. Go to **Files > Clean Up** in the sidebar.\n2. Wisp scores your files for junk likelihood based on name, age, and size.\n3. Click **Trash** on any candidate. It moves to your system Trash (recoverable), never permanent deletion.",
     },
     {
         // Visualize / treemap / disk usage
@@ -82,7 +82,7 @@ const NAVIGATION_RULES: Array<{ pattern: RegExp; response: string }> = [
     {
         // Search / find files
         pattern: /\b(how (do i|to) search|semantic search|how (does|do) (search|the search) work|find files (by|using) (meaning|content|description|ai))\b/i,
-        response: "Wisp uses semantic (AI-powered) search — just describe what you're looking for in plain English and I'll find relevant files from your indexed folders, even if the exact words don't match the filename.\n\nYou can ask me directly here, like: *\"find my tax documents from last year\"* or *\"which files are about the marketing project?\"*",
+        response: "Wisp uses semantic (AI-powered) search. Just describe what you're looking for in plain English and I'll find relevant files from your indexed folders, even if the exact words don't match the filename.\n\nYou can ask me directly here, like: *\"find my tax documents from last year\"* or *\"which files are about the marketing project?\"*",
     },
 ];
 
@@ -90,12 +90,12 @@ const LIMITATION_RULES: Array<{ pattern: RegExp; response: string }> = [
     {
         // Asking about contents of a specific unindexed folder by path or common name
         pattern: /\b(what('s| is) in|list( the)? files? in|show (me )?(what('s| is) in|files? in)|contents? of)\b.{0,40}\b(folder|directory|downloads?|desktop|documents?|pictures?|music|videos?|[a-z]:\\|~\/|\/home\/|\/users\/)/i,
-        response: "I can only answer questions about folders you've indexed in Wisp. If that folder hasn't been scanned yet, head to **Files → Scan & Index**, pick the folder, and run a scan — then I'll have full context to answer questions about it.",
+        response: "I can only answer questions about folders you've indexed in Wisp. If that folder hasn't been scanned yet, head to **Files > Scan & Index**, pick the folder, and run a scan. Then I'll have full context to answer questions about it.",
     },
     {
         // General "my files" / "my computer" type questions without indexed context
         pattern: /\b(what files (do i have|are on my (pc|computer|laptop|machine|disk|drive))|show (me )?my (files|folders|documents)|list (all )?(my )?(files|folders)|what('s| is) on my (computer|pc|hard ?drive|disk))\b/i,
-        response: "I can only see files in folders you've indexed with Wisp — I don't have access to your whole PC. To get started:\n1. Go to **Files → Scan & Index**.\n2. Pick the folders you want me to know about.\n3. Run a scan, then ask me anything about those files.",
+        response: "I can only see files in folders you've indexed with Wisp. I don't have access to your whole PC. To get started:\n1. Go to **Files > Scan & Index**.\n2. Pick the folders you want me to know about.\n3. Run a scan, then ask me anything about those files.",
     },
 ];
 
@@ -117,7 +117,7 @@ const WELCOME_MESSAGES: Message[] = [
         id: 'welcome',
         role: 'ai',
         content:
-            "Hi! I'm Wisp's file assistant. I can help you find, organize, and clean up files. Ask me anything about your indexed folders — like \"find my largest files\" or \"what duplicates do I have?\"",
+            "Hi! I'm Wisp's file assistant. I can help you find, organize, and clean up files. Ask me anything about your indexed folders, like \"find my largest files\" or \"what duplicates do I have?\"",
         timestamp: Date.now(),
     },
 ];
@@ -351,7 +351,7 @@ export default function AssistantView() {
                 <button
                     className={`assistant-autospeak-btn${autoSpeak ? ' active' : ''}`}
                     onClick={toggleAutoSpeak}
-                    title={autoSpeak ? 'Auto-play on — click to turn off' : 'Auto-play off — click to turn on'}
+                    title={autoSpeak ? 'Auto-play on (click to turn off)' : 'Auto-play off (click to turn on)'}
                 >
                     <Headphones size={12} />
                     {autoSpeak ? 'Auto-play on' : 'Auto-play off'}
