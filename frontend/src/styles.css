@@ -140,7 +140,7 @@ body {
   font-size: var(--fs-body);
   line-height: var(--lh-normal);
   -webkit-font-smoothing: antialiased;
-  filter: sepia(-0) contrast(1.2);
+  filter: sepia(0) contrast(1.15);
 }
 
 #root {
