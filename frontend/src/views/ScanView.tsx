@@ -12,16 +12,7 @@ import {
     AlertTriangle,
     Search,
 } from 'lucide-react';
-import type { PipelineStatus, TaggedFile } from '../components/AppShell';
-
-/* ── Job progress state ── */
-type JobState = {
-    job_id: string;
-    status: 'queued' | 'running' | 'success' | 'failed';
-    progress_current: number;
-    progress_total: number;
-    progress_message: string;
-} | null;
+import type { PipelineStatus, TaggedFile, JobState } from '../components/AppShell';
 
 type IndexedFile = {
     file_id: string;
@@ -47,6 +38,8 @@ type ScanViewProps = {
     pipeline: PipelineStatus;
     taggedFiles: TaggedFile[];
     busy: string;
+    onJobUpdate: (job: JobState) => void;
+    onIndexedFiles: (files: { name: string; path: string }[]) => void;
 };
 
 const DEPTH_LABELS: Record<string, string> = {
@@ -71,6 +64,8 @@ export default function ScanView({
     pipeline,
     taggedFiles,
     busy,
+    onJobUpdate,
+    onIndexedFiles,
 }: ScanViewProps) {
     const hasRoot = rootFolders.length > 0;
 
@@ -92,7 +87,9 @@ export default function ScanView({
     const fetchIndexedFiles = async (jobId?: string) => {
         try {
             const data = await window.wispApi.getIndexedFiles(jobId);
-            setIndexedFiles(data.files || []);
+            const files: IndexedFile[] = data.files || [];
+            setIndexedFiles(files);
+            onIndexedFiles(files.map(f => ({ name: f.name, path: f.file_path })));
         } catch {
             // Silently ignore — files will just be empty
         }
@@ -107,27 +104,32 @@ export default function ScanView({
         if (jobBusy || rootFolders.length === 0) return;
         setJobBusy(true);
         setJob(null);
+        onJobUpdate(null);
         setIndexedFiles([]);
         try {
             const { job_id } = await window.wispApi.startScanJob(rootFolders);
-            setJob({
+            const initial: JobState = {
                 job_id,
                 status: 'queued',
                 progress_current: 0,
                 progress_total: 0,
                 progress_message: 'Starting\u2026',
-            });
+            };
+            setJob(initial);
+            onJobUpdate(initial);
 
             timerRef.current = setInterval(async () => {
                 try {
                     const data = await window.wispApi.pollJob(job_id);
-                    setJob({
+                    const updated: JobState = {
                         job_id: data.job_id,
                         status: data.status,
                         progress_current: data.progress_current,
                         progress_total: data.progress_total,
                         progress_message: data.progress_message,
-                    });
+                    };
+                    setJob(updated);
+                    onJobUpdate(updated);
 
                     if (data.status === 'success' || data.status === 'failed') {
                         if (timerRef.current) clearInterval(timerRef.current);

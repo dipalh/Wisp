@@ -8,8 +8,9 @@ import MemoryView from '../views/MemoryView';
 import AssistantView from '../views/AssistantView';
 import ExtractView from '../views/ExtractView';
 import DebloatView from '../views/DebloatView';
+import OrganizeView from '../views/OrganizeView';
 
-export type ViewId = 'scan' | 'clean' | 'visualize' | 'memory' | 'assistant' | 'extract' | 'debloat';
+export type ViewId = 'scan' | 'clean' | 'visualize' | 'memory' | 'assistant' | 'extract' | 'debloat' | 'organize';
 
 export type TreeNode = {
     name: string;
@@ -44,6 +45,14 @@ export type PipelineStatus = {
     total: number;
 };
 
+export type JobState = {
+    job_id: string;
+    status: 'queued' | 'running' | 'success' | 'failed';
+    progress_current: number;
+    progress_total: number;
+    progress_message: string;
+} | null;
+
 const VIEW_TITLES: Record<ViewId, string> = {
     scan: 'Scan',
     clean: 'Clean',
@@ -52,6 +61,7 @@ const VIEW_TITLES: Record<ViewId, string> = {
     assistant: 'Assistant',
     extract: 'Extract',
     debloat: 'Debloat',
+    organize: 'Organize',
 };
 
 const VIEW_SUBTITLES: Record<ViewId, string> = {
@@ -62,6 +72,7 @@ const VIEW_SUBTITLES: Record<ViewId, string> = {
     assistant: 'AI-powered file assistant',
     extract: 'Pull text from images and PDFs',
     debloat: 'Optimize and debloat Windows',
+    organize: 'AI-generated folder restructuring',
 };
 
 export default function AppShell() {
@@ -86,6 +97,9 @@ export default function AppShell() {
 
     // Recent files for context panel
     const [recentFiles, setRecentFiles] = useState<{ name: string; path: string }[]>([]);
+
+    // Active scan job (lifted from ScanView so ContextPanel can show progress)
+    const [jobState, setJobState] = useState<JobState>(null);
 
     // --- Handlers ---
     const addFolder = async () => {
@@ -175,13 +189,8 @@ export default function AppShell() {
         }
     };
 
-    const handleOrganize = async () => {
-        if (rootFolders.length === 0) return;
-        setBusy('Organizing...');
-        const result = await window.wispApi.organizeFolder(rootFolders[0]);
-        if (rootFolders[0]) await handleScan(rootFolders[0]);
-        setBusy('');
-        setStatusText(`Moved ${result.moved} files`);
+    const handleOrganize = () => {
+        setActiveView('organize');
     };
 
     const handleTagFiles = async (provider: 'local' | 'api') => {
@@ -211,6 +220,8 @@ export default function AppShell() {
                         pipeline={pipeline}
                         taggedFiles={taggedFiles}
                         busy={busy}
+                        onJobUpdate={setJobState}
+                        onIndexedFiles={setRecentFiles}
                     />
                 );
             case 'clean':
@@ -249,6 +260,14 @@ export default function AppShell() {
                 return <ExtractView />;
             case 'debloat':
                 return <DebloatView busy={busy} />;
+            case 'organize':
+                return (
+                    <OrganizeView
+                        rootFolders={rootFolders}
+                        busy={busy}
+                        onJobUpdate={setJobState}
+                    />
+                );
             default:
                 return null;
         }
@@ -281,6 +300,7 @@ export default function AppShell() {
                 rootFolders={rootFolders}
                 recentFiles={recentFiles}
                 onRemoveFolder={removeFolder}
+                job={jobState}
             />
         </div>
     );

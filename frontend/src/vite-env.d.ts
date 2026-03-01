@@ -39,10 +39,28 @@ interface IndexedFile {
   updated_at: string;
 }
 
+interface FileMapping {
+  original_path: string;
+  suggested_path: string;
+}
+
+interface DirectoryProposal {
+  name: string;
+  rationale: string;
+  folder_tree: string[];
+  mappings: FileMapping[];
+}
+
+interface DirectorySuggestions {
+  proposals: DirectoryProposal[];
+  recommendation: string;
+}
+
 interface WispApi {
   pickFolder: () => Promise<string | null>;
   scanFolder: (folderPath: string) => Promise<TreeNode | null>;
-  organizeFolder: (folderPath: string) => Promise<{ moved: number; skipped: number }>;
+  organizeFolder: (folderPath: string) => Promise<DirectorySuggestions>;
+  applyOrganize: (rootPath: string, mappings: FileMapping[]) => Promise<{ job_id: string }>;
   tagFiles: (payload: { rootPath: string; provider: 'local' | 'api' }) => Promise<TaggedFile[]>;
   suggestDelete: (folderPath: string) => Promise<DeleteSuggestion[]>;
   trashPath: (targetPath: string) => Promise<{ ok: boolean }>;

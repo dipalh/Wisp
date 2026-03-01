@@ -6,15 +6,19 @@ import {
     Check,
     Globe,
     File,
+    Loader2,
+    CheckCircle2,
+    XCircle,
 } from 'lucide-react';
 import { useState } from 'react';
-import type { PipelineStatus } from './AppShell';
+import type { PipelineStatus, JobState } from './AppShell';
 
 type ContextPanelProps = {
     pipeline: PipelineStatus;
     rootFolders: string[];
     recentFiles: { name: string; path: string }[];
     onRemoveFolder: (folder: string) => void;
+    job?: JobState;
 };
 
 const PIPELINE_STAGES = [
@@ -36,6 +40,7 @@ export default function ContextPanel({
     rootFolders,
     recentFiles,
     onRemoveFolder,
+    job,
 }: ContextPanelProps) {
     const [progressOpen, setProgressOpen] = useState(true);
     const [contextOpen, setContextOpen] = useState(true);
@@ -86,11 +91,50 @@ export default function ContextPanel({
                                 );
                             })}
                         </div>
-                        <div className="progress-label">
-                            {pipeline.total > 0
-                                ? `${pipeline.indexed} indexed · ${pipeline.embedded} embedded`
-                                : 'Steps will show as the task unfolds.'}
-                        </div>
+
+                        {/* Live job progress bar */}
+                        {job ? (() => {
+                            const pct = job.progress_total > 0
+                                ? Math.round((job.progress_current / job.progress_total) * 100)
+                                : 0;
+                            const isRunning = job.status === 'queued' || job.status === 'running';
+                            const isSuccess = job.status === 'success';
+                            const isFailed = job.status === 'failed';
+                            return (
+                                <div className="panel-job-progress">
+                                    <div className="panel-job-header">
+                                        {isRunning && <Loader2 size={12} className="spin" />}
+                                        {isSuccess && <CheckCircle2 size={12} style={{ color: 'var(--accent)' }} />}
+                                        {isFailed && <XCircle size={12} style={{ color: '#e53e3e' }} />}
+                                        <span className="panel-job-status">
+                                            {isRunning && 'Indexing\u2026'}
+                                            {isSuccess && 'Scan complete'}
+                                            {isFailed && 'Scan failed'}
+                                        </span>
+                                        {job.progress_total > 0 && (
+                                            <span className="panel-job-count">
+                                                {job.progress_current}/{job.progress_total}
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="job-progress-track">
+                                        <div
+                                            className={`job-progress-fill${isSuccess ? ' done' : isFailed ? ' error' : ''}`}
+                                            style={{ width: `${pct}%` }}
+                                        />
+                                    </div>
+                                    {job.progress_message && (
+                                        <div className="panel-job-message">{job.progress_message}</div>
+                                    )}
+                                </div>
+                            );
+                        })() : (
+                            <div className="progress-label">
+                                {pipeline.total > 0
+                                    ? `${pipeline.indexed} indexed · ${pipeline.embedded} embedded`
+                                    : 'Steps will show as the task unfolds.'}
+                            </div>
+                        )}
                     </div>
                 )}
             </div>

@@ -7,6 +7,7 @@ import {
     MessageSquare,
     ScanText,
     Zap,
+    Wand2,
     PlusCircle,
     FileText,
 } from 'lucide-react';
@@ -23,6 +24,7 @@ const TAB_VIEWS: Record<TabId, { id: ViewId; icon: typeof FolderSearch; label: s
     files: [
         { id: 'scan', icon: FolderSearch, label: 'Scan & Index' },
         { id: 'clean', icon: Sparkles, label: 'Clean Up' },
+        { id: 'organize', icon: Wand2, label: 'Organize' },
         { id: 'visualize', icon: LayoutGrid, label: 'Visualize' },
         { id: 'extract', icon: ScanText, label: 'Extract Text' },
         { id: 'debloat', icon: Zap, label: 'Debloat' },

@@ -1085,6 +1085,42 @@ textarea {
   overflow: hidden;
 }
 
+/* Panel-specific job progress (inside ContextPanel) */
+.panel-job-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: var(--sp-3);
+}
+
+.panel-job-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.panel-job-status {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.panel-job-count {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.panel-job-message {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .job-progress-fill {
   height: 100%;
   background: var(--accent);
@@ -2492,4 +2528,130 @@ textarea {
   font-size: var(--fs-small);
   color: var(--text-muted);
   padding: var(--sp-2) var(--sp-3);
+}
+
+/* ── Organize View ─────────────────────────────────────────────────── */
+
+.organize-recommendation {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 12px 16px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.organize-recommendation-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 4px;
+}
+
+.organize-proposal {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.organize-proposal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.organize-proposal-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.organize-proposal-rationale {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 3px;
+  line-height: 1.45;
+}
+
+.organize-tree-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 2px 0;
+  text-align: left;
+  transition: color 0.15s;
+}
+
+.organize-tree-toggle:hover {
+  color: var(--text-secondary);
+}
+
+.organize-tree {
+  background: var(--bg-default);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.organize-tree-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.organize-tree-folder {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.organize-tree-divider {
+  height: 1px;
+  background: var(--border-subtle);
+  margin: 6px 0;
+}
+
+.organize-mapping {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 6px;
+  align-items: center;
+  font-size: 11px;
+  padding: 1px 0;
+}
+
+.organize-mapping-src {
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+}
+
+.organize-mapping-arrow {
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+
+.organize-mapping-dst {
+  color: var(--accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

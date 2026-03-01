@@ -1,13 +1,63 @@
+import shutil
+import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
+from pydantic import BaseModel
 
 from services.actions import Action, ActionStatus, ActionType
 from services.actions import add as add_action
+from services.job_db import create_job, set_status, update_progress
 from services.organizer.models import DirectorySuggestions
 from services.organizer.suggester import suggest_directories
 
 router = APIRouter()
+
+
+class MappingItem(BaseModel):
+    original_path: str
+    suggested_path: str
+
+
+class ApplyRequest(BaseModel):
+    mappings: list[MappingItem]
+
+
+@router.post("/apply", summary="Apply an organization proposal")
+async def apply_proposal(body: ApplyRequest, background_tasks: BackgroundTasks):
+    """Move files according to the chosen proposal mappings."""
+    if not body.mappings:
+        raise HTTPException(status_code=400, detail="mappings must not be empty")
+    job_id = uuid.uuid4().hex
+    create_job(job_id, "organize")
+    background_tasks.add_task(_run_organize, job_id, body.mappings)
+    return {"job_id": job_id}
+
+
+def _run_organize(job_id: str, mappings: list[MappingItem]) -> None:
+    total = len(mappings)
+    moved = 0
+    failed = 0
+    set_status(job_id, "running")
+    update_progress(job_id, 0, total, "Starting file moves\u2026")
+    for i, m in enumerate(mappings):
+        src = Path(m.original_path)
+        dst = Path(m.suggested_path)
+        update_progress(job_id, i, total, f"Moving: {src.name}")
+        try:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            src.rename(dst)
+            moved += 1
+        except OSError:
+            try:
+                shutil.copy2(str(src), str(dst))
+                src.unlink()
+                moved += 1
+            except Exception:
+                failed += 1
+        update_progress(job_id, i + 1, total, f"Moved: {src.name}")
+    msg = f"Done \u2014 {moved}/{total} files moved" + (f", {failed} failed" if failed else "")
+    set_status(job_id, "success" if failed == 0 else "failed", msg)
 
 
 @router.get(

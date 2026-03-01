@@ -409,28 +409,32 @@ ipcMain.handle('folder:scan', async (_, rootPath) => {
 });
 
 ipcMain.handle('folder:organize', async (_, rootPath) => {
-  try {
-    const ingestResp = await fetch(
-      `${apiUrl}/api/v1/ingest/directory?path=${encodeURIComponent(rootPath)}`,
-      { method: 'POST' }
-    );
-    if (!ingestResp.ok) throw new Error(`Ingest HTTP ${ingestResp.status}`);
-    const { indexed } = await ingestResp.json();
+  const ingestResp = await fetch(
+    `${apiUrl}/api/v1/ingest/directory?path=${encodeURIComponent(rootPath)}`,
+    { method: 'POST' }
+  );
+  if (!ingestResp.ok) throw new Error(`Ingest HTTP ${ingestResp.status}`);
 
-    const suggestResp = await fetch(`${apiUrl}/api/v1/organize/suggestions`);
-    if (!suggestResp.ok) throw new Error(`Suggest HTTP ${suggestResp.status}`);
-    const suggestions = await suggestResp.json();
+  const suggestResp = await fetch(`${apiUrl}/api/v1/organize/suggestions`);
+  if (!suggestResp.ok) throw new Error(`Suggest HTTP ${suggestResp.status}`);
+  return suggestResp.json(); // { proposals: [...], recommendation: "..." }
+})
 
-    console.log('[organize] recommendation:', suggestions.recommendation);
-    suggestions.proposals?.forEach((p, i) =>
-      console.log(`  Proposal ${i + 1} (${p.name}): ${p.mappings?.length} file mappings`)
-    );
-
-    return { moved: indexed ?? 0, skipped: 0 };
-  } catch (err) {
-    console.error('[organize] error:', err.message);
-    return { moved: 0, skipped: 0 };
-  }
+ipcMain.handle('organize:apply', async (_, rootPath, mappings) => {
+  // Resolve relative suggested_paths against the root folder
+  const resolved = mappings.map(m => ({
+    original_path: m.original_path,
+    suggested_path: path.isAbsolute(m.suggested_path)
+      ? m.suggested_path
+      : path.join(rootPath, m.suggested_path),
+  }));
+  const resp = await fetch(`${apiUrl}/api/v1/organize/apply`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mappings: resolved }),
+  });
+  if (!resp.ok) throw new Error(`Organize apply failed: HTTP ${resp.status}`);
+  return resp.json(); // { job_id }
 })
 
 ipcMain.handle('files:tag', async (_, payload) => {

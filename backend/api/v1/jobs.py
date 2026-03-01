@@ -12,7 +12,7 @@ from __future__ import annotations
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 
 from services.job_db import create_job, get_job, get_indexed_files
@@ -26,13 +26,13 @@ class ScanRequest(BaseModel):
 
 
 @router.post("/scan", summary="Start a scan & index job")
-async def start_scan_job(body: ScanRequest):
-    """Create a queued job and dispatch scan_and_index via Celery."""
+async def start_scan_job(body: ScanRequest, background_tasks: BackgroundTasks):
+    """Create a queued job and run scan_and_index as a background task."""
     if not body.folders:
         raise HTTPException(status_code=400, detail="folders list must not be empty")
     job_id = uuid.uuid4().hex
     create_job(job_id, "scan")
-    scan_and_index.delay(job_id, body.folders)
+    background_tasks.add_task(scan_and_index, job_id, body.folders)
     return {"job_id": job_id}
 
 
