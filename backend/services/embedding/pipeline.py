@@ -755,29 +755,6 @@ async def _ingest_async(
         return await asyncio.to_thread(ingest, result, file_id, **kwargs)
 
 
-# ── Deletable tag evaluation ─────────────────────────────────────────────────
-
-
-def _maybe_tag_deletable(
-    file_path: Path,
-    ext: str,
-    depth: str,
-    ai_summary: str = "",
-) -> None:
-    """Fire-and-forget: evaluate and apply/remove the OS-level Deletable tag.
-
-    Bidirectional — if a file was previously tagged but is now protected
-    (e.g. moved into Documents/), the tag is removed.  Must NEVER raise
-    or block ingestion.
-    """
-    try:
-        from services.os_tags.deletable import set_deletable, should_mark_deletable
-        deletable = should_mark_deletable(file_path, ext, depth, ai_summary)
-        set_deletable(file_path, deletable)
-    except Exception:
-        pass  # tagging must never block ingestion
-
-
 # ── Smart file-level ingest (3-Layer) ────────────────────────────────────────
 
 
@@ -886,7 +863,6 @@ async def ingest_file(
             _scan_stats["full"] += 1
             if fp:
                 _update_cache(str(file_path), fp, file_id, "deep", result.chunk_count)
-            _maybe_tag_deletable(file_path, ext, "deep", ai_summary)
             return result
 
         else:
@@ -948,7 +924,6 @@ async def ingest_file(
         _scan_stats["ai_preview" if ai_summary else "card_only"] += 1
         if fp:
             _update_cache(str(file_path), fp, file_id, depth, result.chunk_count)
-        _maybe_tag_deletable(file_path, ext, depth, ai_summary)
         return result
 
     # ═══════════════════════════════════════════════════════════════════
@@ -966,7 +941,6 @@ async def ingest_file(
     _scan_stats["card_only"] += 1
     if fp:
         _update_cache(str(file_path), fp, file_id, "card", result.chunk_count)
-    _maybe_tag_deletable(file_path, ext, "card")
     return result
 
 

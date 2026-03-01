@@ -209,7 +209,7 @@ def test_tagging_failure_does_not_crash_task(client, _celery_eager, tmp_path):
          patch("services.embedding.pipeline.init_store"), \
          patch("services.embedding.pipeline.teardown_store"), \
          patch("services.os_tags.deletable.should_mark_deletable", side_effect=_raise), \
-         patch("services.os_tags.deletable.is_deletable", side_effect=_raise):
+         patch("services.os_tags.deletable.set_deletable", side_effect=_raise):
             resp = client.post(
                 "/api/v1/jobs/scan",
                 json={"folders": [str(scan_dir)]},

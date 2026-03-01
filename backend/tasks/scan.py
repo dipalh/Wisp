@@ -37,7 +37,7 @@ async def _run_pipeline(job_id: str, all_files: list[Path]) -> int:
     Returns the count of successfully indexed files.
     """
     from services.embedding import pipeline
-    from services.os_tags.deletable import should_mark_deletable, is_deletable as os_is_deletable
+    from services.os_tags.deletable import should_mark_deletable, set_deletable
 
     total = len(all_files)
     indexed = 0
@@ -56,16 +56,22 @@ async def _run_pipeline(job_id: str, all_files: list[Path]) -> int:
                 logger.warning("ingest_file failed for %s: %s", file_path, exc)
                 continue
 
-            # Compute deletable flag for our DB (source of truth).
+            # is_deletable: heuristic decision (DB source of truth for UI/tinder).
             is_del = False
-            tagged = False
             try:
                 is_del = should_mark_deletable(file_path, ext, result.depth)
             except Exception:
                 pass
+
+            # os_tag_applied: True only when we successfully wrote the
+            # "Deletable" OS tag.  When is_del is False we still call
+            # set_deletable(path, False) to clean up stale tags, but
+            # os_tag_applied stays False (we didn't *apply* a tag).
+            os_tag_applied = False
             try:
-                if is_del:
-                    tagged = os_is_deletable(file_path)
+                tag_write_ok = set_deletable(file_path, is_del)
+                if is_del and tag_write_ok:
+                    os_tag_applied = True
             except Exception:
                 pass
 
@@ -80,7 +86,7 @@ async def _run_pipeline(job_id: str, all_files: list[Path]) -> int:
                     chunk_count=result.chunk_count,
                     engine=result.engine,
                     is_deletable=is_del,
-                    tagged_os=tagged,
+                    tagged_os=os_tag_applied,
                 )
             except Exception as exc:
                 logger.warning("upsert_indexed_file failed for %s: %s", file_path, exc)
