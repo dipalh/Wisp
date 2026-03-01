@@ -16,6 +16,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 
 import services.actions as action_store
+from services.actions.executor import ExecutionError, execute_action
 from services.actions.models import Action, ActionStatus, ActionType
 
 router = APIRouter()
@@ -45,6 +46,27 @@ async def get_action(action_id: str):
     if action is None:
         raise HTTPException(status_code=404, detail=f"Action '{action_id}' not found")
     return action
+
+
+@router.post("/{action_id}/apply", summary="Execute a proposed action", response_model=Action)
+async def apply_action(action_id: str):
+    """Execute a PROPOSED action, making the file operation real.
+
+    Supported types: MOVE (quarantine/archive), RENAME, DELETE.
+
+    The Root Scope Guard is enforced — the source file must be under a
+    registered root (or any path is allowed if no roots are set).
+
+    On success the action transitions PROPOSED -> APPLIED and the file
+    has been moved/renamed/deleted.
+    """
+    try:
+        return execute_action(action_id)
+    except ExecutionError as exc:
+        status = 404 if "not found" in str(exc).lower() else 422
+        raise HTTPException(status_code=status, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Execution failed: {exc}")
 
 
 @router.post("/{action_id}/undo", summary="Undo an action", response_model=Action)
