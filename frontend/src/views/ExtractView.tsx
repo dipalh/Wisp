@@ -1,0 +1,442 @@
+import { useState, useCallback, useRef, useEffect } from 'react';
+import {
+    ScanText, Upload, Copy, Check, RotateCcw, AlertCircle,
+    ChevronLeft, ChevronRight, Scissors, FileImage,
+} from 'lucide-react';
+import * as pdfjsLib from 'pdfjs-dist';
+import type { PDFDocumentProxy } from 'pdfjs-dist';
+
+// Vite resolves this to the bundled worker file
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+    'pdfjs-dist/build/pdf.worker.min.mjs',
+    import.meta.url,
+).href;
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+type OcrResult = {
+    text: string;
+    word_count?: number;
+    char_count?: number;
+    confidence?: number;
+};
+
+type State = 'idle' | 'loading' | 'pdf-select' | 'done' | 'error';
+
+type Rect = { x: number; y: number; w: number; h: number };
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
+export default function ExtractView() {
+    const [state, setState]         = useState<State>('idle');
+    const [fileName, setFileName]   = useState('');
+    const [result, setResult]       = useState<OcrResult | null>(null);
+    const [errorMsg, setErrorMsg]   = useState('');
+    const [dragging, setDragging]   = useState(false);
+    const [copied, setCopied]       = useState(false);
+
+    // PDF viewer state
+    const [pdfDoc, setPdfDoc]           = useState<PDFDocumentProxy | null>(null);
+    const [pageNum, setPageNum]         = useState(1);
+    const [totalPages, setTotalPages]   = useState(0);
+    const [selection, setSelection]     = useState<Rect | null>(null);
+    const [isSelecting, setIsSelecting] = useState(false);
+    const [dragStart, setDragStart]     = useState<{ x: number; y: number } | null>(null);
+
+    const mainCanvasRef    = useRef<HTMLCanvasElement>(null);
+    const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
+    const canvasWrapRef    = useRef<HTMLDivElement>(null);
+
+    // ── PDF rendering ──────────────────────────────────────────────────────────
+
+    const renderPage = useCallback(async (doc: PDFDocumentProxy, num: number) => {
+        const page    = await doc.getPage(num);
+        const main    = mainCanvasRef.current;
+        const overlay = overlayCanvasRef.current;
+        if (!main || !overlay) return;
+
+        // Fit to the container's current width (minus 2px for the border)
+        const containerW = (canvasWrapRef.current?.clientWidth ?? 700) - 2;
+        const raw   = page.getViewport({ scale: 1 });
+        const scale = containerW / raw.width;
+        const vp    = page.getViewport({ scale });
+
+        main.width    = vp.width;
+        main.height   = vp.height;
+        overlay.width  = vp.width;
+        overlay.height = vp.height;
+
+        await page.render({ canvas: main, canvasContext: main.getContext('2d')!, viewport: vp }).promise;
+
+        overlay.getContext('2d')!.clearRect(0, 0, overlay.width, overlay.height);
+        setSelection(null);
+    }, []);
+
+    useEffect(() => {
+        if (pdfDoc && state === 'pdf-select') renderPage(pdfDoc, pageNum);
+    }, [pdfDoc, pageNum, state, renderPage]);
+
+    // ── Canvas selection ───────────────────────────────────────────────────────
+
+    const drawRect = (sel: Rect) => {
+        const canvas = overlayCanvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d')!;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (sel.w > 4 && sel.h > 4) {
+            // Fill first (no dash needed)
+            ctx.fillStyle = 'rgba(91,155,213,0.12)';
+            ctx.fillRect(sel.x, sel.y, sel.w, sel.h);
+            // Draw border as a single continuous path so dashes are uniform
+            ctx.beginPath();
+            ctx.moveTo(sel.x, sel.y);
+            ctx.lineTo(sel.x + sel.w, sel.y);
+            ctx.lineTo(sel.x + sel.w, sel.y + sel.h);
+            ctx.lineTo(sel.x, sel.y + sel.h);
+            ctx.closePath();
+            ctx.strokeStyle = 'rgba(91,155,213,0.9)';
+            ctx.lineWidth   = 2;
+            ctx.setLineDash([6, 3]);
+            ctx.stroke();
+        }
+    };
+
+    const canvasPos = (e: React.MouseEvent<HTMLCanvasElement>) => {
+        const cv = overlayCanvasRef.current!;
+        const r  = cv.getBoundingClientRect();
+        return {
+            x: (e.clientX - r.left)  * (cv.width  / r.width),
+            y: (e.clientY - r.top)   * (cv.height / r.height),
+        };
+    };
+
+    const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+        const pos = canvasPos(e);
+        setDragStart(pos);
+        setIsSelecting(true);
+        setSelection(null);
+        overlayCanvasRef.current?.getContext('2d')
+            ?.clearRect(0, 0, overlayCanvasRef.current.width, overlayCanvasRef.current.height);
+    };
+
+    const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+        if (!isSelecting || !dragStart) return;
+        const pos = canvasPos(e);
+        const sel: Rect = {
+            x: Math.min(dragStart.x, pos.x),
+            y: Math.min(dragStart.y, pos.y),
+            w: Math.abs(pos.x - dragStart.x),
+            h: Math.abs(pos.y - dragStart.y),
+        };
+        setSelection(sel);
+        drawRect(sel);
+    };
+
+    const handleMouseUp = () => setIsSelecting(false);
+
+    // ── File loading ───────────────────────────────────────────────────────────
+
+    const loadPdf = useCallback(async (source: string | File, name: string) => {
+        setFileName(name);
+        setPageNum(1);
+        setSelection(null);
+        try {
+            let data: ArrayBuffer;
+            if (typeof source === 'string') {
+                // Renderer can't fetch file:// URLs — read via main process IPC
+                const b64: string = await (window as any).wispApi.readFileBase64(source);
+                const raw = atob(b64);
+                const bytes = new Uint8Array(raw.length);
+                for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+                data = bytes.buffer;
+            } else {
+                data = await source.arrayBuffer();
+            }
+            const doc = await pdfjsLib.getDocument({ data }).promise;
+            setPdfDoc(doc);
+            setTotalPages(doc.numPages);
+            setState('pdf-select');
+        } catch (e: any) {
+            setErrorMsg(e?.message ?? 'Failed to load PDF.');
+            setState('error');
+        }
+    }, []);
+
+    const runOcr = useCallback(async (filePath: string, name: string) => {
+        setFileName(name);
+        setState('loading');
+        setResult(null);
+        setErrorMsg('');
+        try {
+            const res = await (window as any).wispApi.extractText(filePath);
+            setResult(res);
+            setState('done');
+        } catch (e: any) {
+            setErrorMsg(e?.message ?? 'Extraction failed. Check that the backend is running and Google Cloud Vision is configured.');
+            setState('error');
+        }
+    }, []);
+
+    const handleFile = useCallback((fp: string, name: string, fileObj?: File) => {
+        const ext = name.split('.').pop()?.toLowerCase() ?? '';
+        if (ext === 'pdf') loadPdf(fileObj ?? fp, name);
+        else runOcr(fp, name);
+    }, [loadPdf, runOcr]);
+
+    const handleBrowse = async () => {
+        const fp = await (window as any).wispApi.pickFileForOcr();
+        if (!fp) return;
+        const name = fp.split(/[/\\]/).pop() ?? fp;
+        handleFile(fp, name);
+    };
+
+    const handleDragOver  = (e: React.DragEvent) => { e.preventDefault(); setDragging(true); };
+    const handleDragLeave = () => setDragging(false);
+    const handleDrop      = (e: React.DragEvent) => {
+        e.preventDefault();
+        setDragging(false);
+        const file = e.dataTransfer.files[0];
+        if (!file) return;
+        const fp = (file as any).path as string | undefined;
+        if (!fp) return;
+        handleFile(fp, file.name, file);
+    };
+
+    // ── Extract canvas region ──────────────────────────────────────────────────
+
+    const extractRegion = (sel: Rect | null) => {
+        const main = mainCanvasRef.current;
+        if (!main) return;
+
+        const tmp = document.createElement('canvas');
+        if (sel && sel.w > 4 && sel.h > 4) {
+            tmp.width  = sel.w;
+            tmp.height = sel.h;
+            tmp.getContext('2d')!.drawImage(main, sel.x, sel.y, sel.w, sel.h, 0, 0, sel.w, sel.h);
+        } else {
+            tmp.width  = main.width;
+            tmp.height = main.height;
+            tmp.getContext('2d')!.drawImage(main, 0, 0);
+        }
+
+        tmp.toBlob(async (blob) => {
+            if (!blob) return;
+            setState('loading');
+            setResult(null);
+            setErrorMsg('');
+            try {
+                const buf   = await blob.arrayBuffer();
+                const bytes = new Uint8Array(buf);
+                const chunks: string[] = [];
+                for (let i = 0; i < bytes.length; i += 8192) {
+                    chunks.push(String.fromCharCode(...bytes.subarray(i, i + 8192)));
+                }
+                const b64  = btoa(chunks.join(''));
+                const name = `${fileName}_p${pageNum}.png`;
+                const res  = await (window as any).wispApi.extractTextFromBuffer(b64, name);
+                setResult(res);
+                setState('done');
+            } catch (e: any) {
+                setErrorMsg(e?.message ?? 'Extraction failed.');
+                setState('error');
+            }
+        }, 'image/png');
+    };
+
+    // ── Copy / Reset ───────────────────────────────────────────────────────────
+
+    const handleCopy = async () => {
+        if (!result?.text) return;
+        await navigator.clipboard.writeText(result.text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+    };
+
+    const handleReset = () => {
+        setState('idle');
+        setFileName('');
+        setResult(null);
+        setErrorMsg('');
+        setPdfDoc(null);
+        setPageNum(1);
+        setTotalPages(0);
+        setSelection(null);
+    };
+
+    // ── Render: idle ───────────────────────────────────────────────────────────
+
+    if (state === 'idle') {
+        return (
+            <div className="extract-container">
+                <div
+                    className={`extract-dropzone${dragging ? ' dragging' : ''}`}
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    onClick={handleBrowse}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => e.key === 'Enter' && handleBrowse()}
+                >
+                    <div className="extract-dropzone-icon">
+                        <ScanText size={20} />
+                    </div>
+                    <p className="extract-dropzone-title">Drop a file here, or click to browse</p>
+                    <p className="extract-dropzone-formats">
+                        PNG &middot; JPG &middot; WEBP &middot; BMP &middot; TIFF &middot; PDF (region select)
+                    </p>
+                    <button
+                        className="btn btn-primary"
+                        style={{ marginTop: 16 }}
+                        onClick={(e) => { e.stopPropagation(); handleBrowse(); }}
+                    >
+                        <Upload size={14} />
+                        Browse files
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    // ── Render: loading ────────────────────────────────────────────────────────
+
+    if (state === 'loading') {
+        return (
+            <div className="extract-container">
+                <div className="extract-loading">
+                    <span className="status-dot busy" />
+                    <span className="extract-loading-text">
+                        Extracting text from <strong>{fileName}</strong>&hellip;
+                    </span>
+                </div>
+            </div>
+        );
+    }
+
+    // ── Render: error ──────────────────────────────────────────────────────────
+
+    if (state === 'error') {
+        return (
+            <div className="extract-container">
+                <div className="extract-error">
+                    <AlertCircle size={32} className="extract-error-icon" />
+                    <p className="extract-error-title">Extraction failed</p>
+                    <p className="extract-error-desc">{errorMsg}</p>
+                    <button className="btn btn-secondary" onClick={handleReset}>
+                        <RotateCcw size={14} />
+                        Try another file
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    // ── Render: pdf-select ─────────────────────────────────────────────────────
+
+    if (state === 'pdf-select') {
+        const hasSelection = selection != null && selection.w > 4 && selection.h > 4;
+        return (
+            <div className="extract-container extract-pdf-mode">
+                <div className="extract-pdf-header">
+                    <ScanText size={14} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                    <span className="extract-result-name">{fileName}</span>
+                    <span className="chip">Page {pageNum} / {totalPages}</span>
+                    <button
+                        className="btn btn-secondary extract-pdf-nav"
+                        disabled={pageNum <= 1}
+                        onClick={() => setPageNum(p => p - 1)}
+                        title="Previous page"
+                    >
+                        <ChevronLeft size={14} />
+                    </button>
+                    <button
+                        className="btn btn-secondary extract-pdf-nav"
+                        disabled={pageNum >= totalPages}
+                        onClick={() => setPageNum(p => p + 1)}
+                        title="Next page"
+                    >
+                        <ChevronRight size={14} />
+                    </button>
+                </div>
+
+                <p className="extract-pdf-hint">
+                    Drag to select a region, then click <strong>Extract selection</strong>.
+                    Or extract the full page.
+                </p>
+
+                <div className="extract-pdf-canvas-wrap" ref={canvasWrapRef}>
+                    <canvas ref={mainCanvasRef} className="extract-pdf-canvas" />
+                    <canvas
+                        ref={overlayCanvasRef}
+                        className="extract-pdf-overlay"
+                        onMouseDown={handleMouseDown}
+                        onMouseMove={handleMouseMove}
+                        onMouseUp={handleMouseUp}
+                        onMouseLeave={handleMouseUp}
+                    />
+                </div>
+
+                <div className="extract-pdf-actions">
+                    <button
+                        className="btn btn-primary"
+                        disabled={!hasSelection}
+                        onClick={() => extractRegion(selection)}
+                        title={hasSelection ? 'Extract selected region' : 'Draw a selection first'}
+                    >
+                        <Scissors size={14} />
+                        Extract selection
+                    </button>
+                    <button className="btn btn-secondary" onClick={() => extractRegion(null)}>
+                        <FileImage size={14} />
+                        Extract full page
+                    </button>
+                    <button className="btn btn-secondary" onClick={handleReset} style={{ marginLeft: 'auto' }}>
+                        <RotateCcw size={14} />
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    // ── Render: done ───────────────────────────────────────────────────────────
+
+    const wordCount = result?.word_count ?? result?.text?.trim().split(/\s+/).filter(Boolean).length ?? 0;
+    const charCount = result?.char_count ?? result?.text?.length ?? 0;
+
+    return (
+        <div className="extract-container">
+            <div className="extract-result">
+                <div className="extract-result-header">
+                    <ScanText size={14} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                    <span className="extract-result-name">{fileName}</span>
+                    <span className="chip">{wordCount.toLocaleString()} words</span>
+                    <span className="chip">{charCount.toLocaleString()} chars</span>
+                    {result?.confidence != null && (
+                        <span className="chip">{Math.round(result.confidence * 100)}% conf.</span>
+                    )}
+                    <button
+                        className="btn btn-secondary extract-result-copy"
+                        onClick={handleCopy}
+                        title="Copy to clipboard"
+                    >
+                        {copied ? <Check size={13} /> : <Copy size={13} />}
+                        {copied ? 'Copied' : 'Copy'}
+                    </button>
+                </div>
+                <div className="extract-result-body">
+                    {result?.text?.trim() ? (
+                        <pre className="extract-result-text">{result.text}</pre>
+                    ) : (
+                        <p className="extract-empty-result">No text found in this selection.</p>
+                    )}
+                </div>
+            </div>
+
+            <button className="btn btn-secondary" onClick={handleReset}>
+                <RotateCcw size={14} />
+                Extract another file
+            </button>
+        </div>
+    );
+}

@@ -33,104 +33,71 @@ export default function ScanView({
     const hasRoot = rootFolders.length > 0;
 
     /* ──────────────────────────────────────────────
-     * Empty state: document-flow, top-down.
-     * Primary action block, then a content area below.
+     * Empty state — icon + title + desc + button
+     * Generous top padding, not centered in void
      * ────────────────────────────────────────────── */
     if (!hasRoot) {
         return (
-            <div className="doc-flow">
-                {/* Primary action section */}
-                <section className="doc-section">
-                    <div className="doc-action-row">
-                        <div className="doc-action-content">
-                            <h2 className="doc-heading">Choose a folder to get started</h2>
-                            <p className="doc-body">
-                                Wisp will index, tag, and help you clean up your files — all locally.
-                            </p>
-                        </div>
-                        <button className="btn btn-primary" onClick={onAddFolder}>
-                            <FolderPlus size={14} />
-                            Choose folder
-                        </button>
-                    </div>
-                </section>
-
-                {/* Content area — what you'll be able to do */}
-                <div className="doc-divider" />
-
-                <section className="doc-section">
-                    <div className="doc-steps">
-                        <div className="doc-step">
-                            <span className="doc-step-num">1</span>
-                            <div>
-                                <span className="doc-step-title">Index</span>
-                                <span className="doc-step-desc"> — scans files, names, structure</span>
-                            </div>
-                        </div>
-                        <div className="doc-step">
-                            <span className="doc-step-num">2</span>
-                            <div>
-                                <span className="doc-step-title">Analyze</span>
-                                <span className="doc-step-desc"> — tags, duplicates, scoring</span>
-                            </div>
-                        </div>
-                        <div className="doc-step">
-                            <span className="doc-step-num">3</span>
-                            <div>
-                                <span className="doc-step-title">Review</span>
-                                <span className="doc-step-desc"> — cleanup suggestions</span>
-                            </div>
-                        </div>
-                    </div>
-                </section>
+            <div className="empty-state">
+                <div className="empty-state-icon">
+                    <FolderPlus size={24} strokeWidth={1.5} />
+                </div>
+                <h2 className="empty-state-title">Choose a folder to get started</h2>
+                <p className="empty-state-desc">
+                    Wisp will index, tag, and help you clean up your files — all locally on your machine.
+                </p>
+                <button className="btn btn-primary" onClick={onAddFolder}>
+                    <FolderPlus size={15} />
+                    Choose folder
+                </button>
             </div>
         );
     }
 
     /* ──────────────────────────────────────────────
-     * Active state: compact action grid + content
+     * Active state — action cards + stats + files
      * ────────────────────────────────────────────── */
     return (
         <div className="doc-flow">
             <div className="scan-grid">
                 <button className="scan-action-card" onClick={onAddFolder} disabled={!!busy}>
-                    <div className="scan-action-icon"><FolderPlus size={15} /></div>
+                    <div className="scan-action-icon"><FolderPlus size={16} /></div>
                     <span className="scan-action-title">Add folder</span>
                     <span className="scan-action-desc">Index another directory</span>
                 </button>
 
                 <button className="scan-action-card" onClick={() => onScan(rootFolders[0])} disabled={!!busy}>
-                    <div className="scan-action-icon"><RefreshCw size={15} /></div>
+                    <div className="scan-action-icon"><RefreshCw size={16} /></div>
                     <span className="scan-action-title">Rescan</span>
                     <span className="scan-action-desc">Refresh file index</span>
                 </button>
 
                 <button className="scan-action-card" onClick={onOrganize} disabled={!!busy}>
-                    <div className="scan-action-icon"><Wand2 size={15} /></div>
+                    <div className="scan-action-icon"><Wand2 size={16} /></div>
                     <span className="scan-action-title">Organize</span>
                     <span className="scan-action-desc">Sort by category</span>
                 </button>
 
                 <button className="scan-action-card" onClick={onSuggestDelete} disabled={!!busy}>
-                    <div className="scan-action-icon"><Trash2 size={15} /></div>
+                    <div className="scan-action-icon"><Trash2 size={16} /></div>
                     <span className="scan-action-title">Find deletables</span>
                     <span className="scan-action-desc">Cleanup candidates</span>
                 </button>
 
                 <button className="scan-action-card" onClick={() => onTagFiles('local')} disabled={!!busy}>
-                    <div className="scan-action-icon"><Tags size={15} /></div>
+                    <div className="scan-action-icon"><Tags size={16} /></div>
                     <span className="scan-action-title">Generate tags</span>
                     <span className="scan-action-desc">Auto-tag locally</span>
                 </button>
 
                 <button className="scan-action-card" onClick={() => onTagFiles('api')} disabled={!!busy}>
-                    <div className="scan-action-icon"><Tags size={15} /></div>
+                    <div className="scan-action-icon"><Tags size={16} /></div>
                     <span className="scan-action-title">AI tags</span>
                     <span className="scan-action-desc">Richer tags via API</span>
                 </button>
             </div>
 
-            {/* Pipeline stats — inline, not a card */}
+            {/* Pipeline stats */}
             {pipeline.indexed > 0 && (
                 <div className="scan-stats">
                     {[
@@ -153,7 +120,7 @@ export default function ScanView({
             {taggedFiles.length > 0 && (
                 <>
                     <div className="doc-divider" />
-                    <div className="scan-file-list-title">
+                    <div className="scan-file-list-title" style={{ marginTop: 16 }}>
                         Tagged files · {taggedFiles.length}
                     </div>
                     {taggedFiles.slice(0, 12).map((file) => (

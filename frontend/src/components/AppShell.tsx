@@ -6,8 +6,10 @@ import CleanView from '../views/CleanView';
 import VisualizeView from '../views/VisualizeView';
 import MemoryView from '../views/MemoryView';
 import AssistantView from '../views/AssistantView';
+import ExtractView from '../views/ExtractView';
+import DebloatView from '../views/DebloatView';
 
-export type ViewId = 'scan' | 'clean' | 'visualize' | 'memory' | 'assistant';
+export type ViewId = 'scan' | 'clean' | 'visualize' | 'memory' | 'assistant' | 'extract' | 'debloat';
 
 export type TreeNode = {
     name: string;
@@ -48,6 +50,8 @@ const VIEW_TITLES: Record<ViewId, string> = {
     visualize: 'Visualize',
     memory: 'Memory',
     assistant: 'Assistant',
+    extract: 'Extract',
+    debloat: 'Debloat',
 };
 
 const VIEW_SUBTITLES: Record<ViewId, string> = {
@@ -56,6 +60,8 @@ const VIEW_SUBTITLES: Record<ViewId, string> = {
     visualize: 'Explore storage usage',
     memory: 'Search files by meaning',
     assistant: 'AI-powered file assistant',
+    extract: 'Pull text from images and PDFs',
+    debloat: 'Optimize and debloat Windows',
 };
 
 export default function AppShell() {
@@ -239,6 +245,10 @@ export default function AppShell() {
                 );
             case 'assistant':
                 return <AssistantView />;
+            case 'extract':
+                return <ExtractView />;
+            case 'debloat':
+                return <DebloatView busy={busy} />;
             default:
                 return null;
         }
