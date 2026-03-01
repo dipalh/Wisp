@@ -773,7 +773,7 @@ async def ingest_file(
     Normal mode uses LOCAL extraction for text/code/PDF/office and BOUNDED
     Gemini calls for AI previews (image captions, document summaries).
     """
-    file_path = Path(file_path)
+    file_path = Path(file_path).resolve()
 
     if file_id is None:
         file_id = hashlib.sha256(str(file_path).encode()).hexdigest()[:16]

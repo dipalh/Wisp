@@ -631,6 +631,7 @@ export default function ExtractView() {
                                 <div
                                     key={v.voice_id}
                                     className={`voice-item${v.voice_id === selectedVoiceId ? ' selected' : ''}`}
+                                    ref={v.voice_id === selectedVoiceId ? (el) => el?.scrollIntoView({ block: 'nearest' }) : null}
                                     onClick={() => {
                                         setSelectedVoiceId(v.voice_id);
                                         localStorage.setItem('wisp_tts_voice', v.voice_id);

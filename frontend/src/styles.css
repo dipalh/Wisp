@@ -1675,7 +1675,144 @@ textarea {
   border-bottom-left-radius: var(--r-xs);
 }
 
+/* Auto-play toggle in voice bar */
+.assistant-autospeak-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px var(--sp-3);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-xs);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.assistant-autospeak-btn:hover {
+  color: var(--text-secondary);
+  border-color: var(--border-default);
+}
+
+.assistant-autospeak-btn.active {
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+}
+
+.assistant-voice-bar-sep {
+  width: 1px;
+  height: 14px;
+  background: var(--border-subtle);
+  flex-shrink: 0;
+}
+
+/* Read aloud button inside AI messages */
+.assistant-speak-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+  padding: 3px var(--sp-3);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-xs);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+  line-height: 1;
+}
+
+.assistant-speak-btn:hover,
+.assistant-speak-btn.speaking {
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+}
+
+/* Source file chips shown below AI responses */
+.assistant-sources {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: var(--sp-4);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.assistant-sources-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin-bottom: 2px;
+}
+
+.assistant-source-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 4px var(--sp-3);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+
+.assistant-source-icon {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.assistant-source-name {
+  font-size: 11px;
+  color: var(--text-secondary);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assistant-source-btn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px var(--sp-2);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-xs);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+  line-height: 1;
+}
+
+.assistant-source-btn:hover {
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+}
+
+.assistant-source-missing {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  font-style: italic;
+  flex-shrink: 0;
+}
+
 .assistant-voice-bar {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--sp-3);
@@ -1684,6 +1821,52 @@ textarea {
   background: var(--bg-main);
   width: 100%;
   max-width: 680px;
+}
+
+.assistant-voice-panel {
+  position: absolute;
+  bottom: 100%;
+  left: var(--sp-5);
+  right: var(--sp-5);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-float);
+  z-index: 10;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: var(--sp-2) 0;
+}
+
+.assistant-voice-selector {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 2px var(--sp-2);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  font-size: var(--fs-tiny);
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color var(--ease), background var(--ease);
+}
+
+.assistant-voice-selector:hover,
+.assistant-voice-selector.active {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+/* inside the floating panel, let the panel itself scroll */
+.assistant-voice-panel .voice-panel-label {
+  padding: 0 var(--sp-3);
+}
+
+.assistant-voice-panel .voice-list {
+  max-height: none;
+  overflow: visible;
 }
 
 .assistant-voice-label {
@@ -2387,10 +2570,16 @@ textarea {
 
 .voice-item:hover {
   background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .voice-item.selected {
   background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.voice-item.selected:hover {
+  background: rgba(91, 155, 213, 0.12);
 }
 
 .voice-item-name {
