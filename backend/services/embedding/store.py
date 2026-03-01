@@ -16,10 +16,12 @@ Table schema ("wisp_chunks")
   ext          : str
   text         : str   — the raw chunk text (used as citation)
   depth        : str   — "card" | "preview" | "deep"
+  tags         : str   — JSON-encoded list[str], cross-platform tag source of truth
   vector       : list<float32>[EMBED_DIM]  — gemini-embedding-001 vector
 """
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -51,8 +53,12 @@ _SCHEMA = pa.schema([
     pa.field("ext",         pa.string()),
     pa.field("text",        pa.string()),
     pa.field("depth",       pa.string()),
+    pa.field("tags",        pa.string()),  # JSON-encoded list[str]
     pa.field("vector",      pa.list_(pa.float32(), EMBED_DIM)),
 ])
+
+# Columns whose absence triggers a schema migration (drop + recreate).
+_REQUIRED_COLS = {"depth", "tags"}
 
 
 # ── Connection management ─────────────────────────────────────────────────────
@@ -98,7 +104,7 @@ def _get_table() -> lancedb.table.Table:
             tbl = _db.open_table(TABLE_NAME)
             # Auto-migrate: drop table if schema is outdated
             col_names = [f.name for f in tbl.schema]
-            if "depth" not in col_names:
+            if not _REQUIRED_COLS.issubset(col_names):
                 _db.drop_table(TABLE_NAME)
                 _table = _db.create_table(TABLE_NAME, schema=_SCHEMA)
             else:
@@ -121,6 +127,7 @@ class SearchHit:
     text: str          # chunk text returned as context / citation
     score: float       # cosine similarity [0, 1]; higher = more similar
     depth: str = "deep"  # "card" | "preview" | "deep"
+    tags: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -133,6 +140,7 @@ def upsert_chunks(
     file_path: str = "",
     ext: str = "",
     depth: str = "deep",
+    tags: list[str] | None = None,
 ) -> int:
     """
     Upsert pre-embedded chunks into LanceDB.
@@ -154,6 +162,7 @@ def upsert_chunks(
         )
 
     table = _get_table()
+    tags_json = json.dumps(tags or [])
     rows = [
         {
             "chunk_id":    c.chunk_id,
@@ -163,6 +172,7 @@ def upsert_chunks(
             "ext":         ext,
             "text":        c.text,
             "depth":       depth,
+            "tags":        tags_json,
             "vector":      [float(v) for v in emb],
         }
         for c, emb in zip(chunks, embeddings)
@@ -229,6 +239,7 @@ def query(
                 text=str(row["text"]),
                 score=similarity,
                 depth=str(row.get("depth", "deep")),
+                tags=json.loads(row["tags"]) if row.get("tags") else [],
             )
         )
 
@@ -269,4 +280,53 @@ def list_files() -> list[dict]:
         return []
     df = _get_table().to_pandas()
     cards = df[df["chunk_index"] == -1]
-    return cards[["file_id", "file_path", "ext", "text"]].to_dict("records")
+    records = cards[["file_id", "file_path", "ext", "text", "tags"]].to_dict("records")
+    # Deserialise JSON tags
+    for r in records:
+        try:
+            r["tags"] = json.loads(r.get("tags", "[]"))
+        except Exception:
+            r["tags"] = []
+    return records
+
+
+# ── Tag CRUD (index-backed, cross-platform) ─────────────────────────────────
+
+
+def get_file_tags(file_id: str) -> list[str]:
+    """Return the tags stored in the index for ``file_id``."""
+    if collection_count() == 0:
+        return []
+    df = _get_table().to_pandas()
+    card = df[(df["file_id"] == file_id) & (df["chunk_index"] == -1)]
+    if card.empty:
+        return []
+    try:
+        return json.loads(card.iloc[0]["tags"])
+    except Exception:
+        return []
+
+
+def update_file_tags(file_id: str, tags: list[str]) -> bool:
+    """Overwrite the tags for every chunk belonging to ``file_id``.
+
+    This is the cross-platform source of truth.  For macOS Finder
+    visibility, pair with ``tagger.add_tag()`` / ``tagger.remove_tag()``.
+    """
+    table = _get_table()
+    tags_json = json.dumps(tags)
+    try:
+        # LanceDB doesn't support UPDATE in-place easily — read, mutate, merge.
+        df = table.to_pandas()
+        mask = df["file_id"] == file_id
+        if not mask.any():
+            return False
+        df.loc[mask, "tags"] = tags_json
+        rows = df[mask].to_dict("records")
+        # Remove vector column conversion issues
+        for r in rows:
+            r["vector"] = [float(v) for v in r["vector"]]
+        table.merge_insert("chunk_id").when_matched_update_all().when_not_matched_insert_all().execute(rows)
+        return True
+    except Exception:
+        return False

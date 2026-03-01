@@ -53,6 +53,14 @@ from ai.embed import embed_batch, embed_text
 from ai.generate import generate_text, generate_with_file
 from services.embedding.chunker import Chunk, chunk_text
 from services.embedding import store
+
+# ── Concurrency guards ────────────────────────────────────────────────────────
+# Per-process safety belts.  Under Celery, the REAL global throttle is
+# worker concurrency + dedicated queues (queue="ai" concurrency=2,
+# queue="embed" concurrency=4).  These semaphores prevent a single
+# async process from over-saturating threads / the embedding endpoint.
+_EMBED_SEM = asyncio.Semaphore(8)   # max concurrent embedding thread-pool calls
+_AI_SEM    = asyncio.Semaphore(4)   # max concurrent Gemini API calls
 from services.embedding.store import SearchHit
 from services.file_processor.models import ContentResult
 
@@ -632,7 +640,14 @@ def ingest(
     classification, extraction, AI preview, and caching.
     """
     file_path = result.filename or result.file_name or ""
-    ext = result.mime_type
+    # Derive ext from the actual file path suffix.  result.mime_type is
+    # *sometimes* a suffix (".pdf") and sometimes a real MIME type
+    # ("application/pdf") depending on the caller.  The file path is
+    # always reliable.
+    _raw_ext = Path(file_path).suffix.lower() if file_path else ""
+    ext = _raw_ext if _raw_ext else (
+        result.mime_type if result.mime_type.startswith(".") else ""
+    )
 
     # 1. Chunk (already capped at MAX_EMBED_CHARS)
     content = (result.content or "")[:MAX_EMBED_CHARS]
@@ -656,9 +671,10 @@ def ingest(
     # 2. Downsample
     chunks = _downsample_chunks(chunks)
 
-    # 3. Prepend file index card for deep ingestion only.
-    #    For card/preview depth, the content already IS the file card —
-    #    adding another index card would be redundant and hurt retrieval.
+    # 3. Always prepend a file-index sentinel (chunk_index == -1).
+    #    This guarantees list_files() can find every indexed file,
+    #    regardless of depth.  For deep files the card contains a
+    #    content preview; for card/preview the content IS the card.
     if depth == "deep":
         _preview = content[:300].replace("\n", " ").strip()
         card_text = (
@@ -666,15 +682,16 @@ def ingest(
             f"processed by {result.engine_used} ({len(chunks)} content chunks).\n"
             f"Content preview: {_preview}"
         )
-        card = Chunk(
-            chunk_id=f"{file_id}:card",
-            file_id=file_id,
-            chunk_index=-1,
-            text=card_text,
-        )
-        all_chunks = [card] + chunks
     else:
-        all_chunks = chunks
+        # card/preview: the first chunk's text is already the rich card
+        card_text = chunks[0].text
+    card = Chunk(
+        chunk_id=f"{file_id}:card",
+        file_id=file_id,
+        chunk_index=-1,
+        text=card_text,
+    )
+    all_chunks = [card] + chunks
 
     # 4. Embed
     errors: list[str] = []
@@ -732,8 +749,29 @@ async def _ingest_async(
     **kwargs,
 ) -> IngestResult:
     """Async wrapper: runs sync ``ingest()`` in a thread so embed_batch
-    doesn't block the event loop."""
-    return await asyncio.to_thread(ingest, result, file_id, **kwargs)
+    doesn't block the event loop.  Gated by ``_EMBED_SEM`` so concurrent
+    callers don't saturate the threadpool / embedding endpoint."""
+    async with _EMBED_SEM:
+        return await asyncio.to_thread(ingest, result, file_id, **kwargs)
+
+
+# ── Deletable tag evaluation ─────────────────────────────────────────────────
+
+
+def _maybe_tag_deletable(
+    file_path: Path,
+    ext: str,
+    depth: str,
+    ai_summary: str = "",
+) -> None:
+    """Fire-and-forget: evaluate and optionally apply the OS-level Deletable
+    tag.  Must NEVER raise or block ingestion."""
+    try:
+        from services.os_tags.deletable import set_deletable, should_mark_deletable
+        if should_mark_deletable(file_path, ext, depth, ai_summary):
+            set_deletable(file_path, True)
+    except Exception:
+        pass  # tagging must never block ingestion
 
 
 # ── Smart file-level ingest (3-Layer) ────────────────────────────────────────
@@ -825,7 +863,8 @@ async def ingest_file(
             ai_summary = ""
             if ext not in TEXT_LIKE_EXTENSIONS:
                 # PDF/office: get AI summary to enrich the card
-                ai_summary = await _ai_summarize_text(content, file_path.name)
+                async with _AI_SEM:
+                    ai_summary = await _ai_summarize_text(content, file_path.name)
                 if ai_summary:
                     _scan_stats["ai_calls"] += 1
                     # Prepend summary to content so it gets chunked & embedded
@@ -843,6 +882,7 @@ async def ingest_file(
             _scan_stats["full"] += 1
             if fp:
                 _update_cache(str(file_path), fp, file_id, "deep", result.chunk_count)
+            _maybe_tag_deletable(file_path, ext, "deep", ai_summary)
             return result
 
         else:
@@ -859,7 +899,8 @@ async def ingest_file(
 
         if ext in IMAGE_EXTENSIONS:
             # Gemini vision caption
-            ai_summary = await _ai_caption_image(file_bytes, ext, file_path.name)
+            async with _AI_SEM:
+                ai_summary = await _ai_caption_image(file_bytes, ext, file_path.name)
             if ai_summary:
                 engine = "gemini-vision"
                 _scan_stats["ai_calls"] += 1
@@ -870,15 +911,24 @@ async def ingest_file(
                 file_bytes, max_chars=AI_PREVIEW_INPUT_CHARS
             )
             if local_text.strip():
-                ai_summary = await _ai_summarize_text(local_text, file_path.name)
+                async with _AI_SEM:
+                    ai_summary = await _ai_summarize_text(local_text, file_path.name)
                 engine = f"local-pdf+ai ({pages}p)" if ai_summary else f"local-pdf ({pages}p)"
             else:
                 # Scanned PDF — send to Gemini document understanding
-                ai_summary = await _ai_summarize_pdf_vision(file_bytes, file_path.name)
+                async with _AI_SEM:
+                    ai_summary = await _ai_summarize_pdf_vision(file_bytes, file_path.name)
                 engine = "gemini-pdf-vision" if ai_summary else "card"
 
             if ai_summary:
                 _scan_stats["ai_calls"] += 1
+
+        elif ext in OFFICE_EXTENSIONS:
+            # Office extraction already failed in the "full" strategy above.
+            # .docx/.pptx/.xlsx are ZIP-based binaries — raw UTF-8 decode
+            # produces garbage.  Fall through to card-only; the user can
+            # trigger deepen_file() (Gemini dispatcher) on demand.
+            engine = "office-extraction-failed"
 
         # Build rich card with AI summary
         depth = "preview" if ai_summary else "card"
@@ -894,6 +944,7 @@ async def ingest_file(
         _scan_stats["ai_preview" if ai_summary else "card_only"] += 1
         if fp:
             _update_cache(str(file_path), fp, file_id, depth, result.chunk_count)
+        _maybe_tag_deletable(file_path, ext, depth, ai_summary)
         return result
 
     # ═══════════════════════════════════════════════════════════════════
@@ -911,6 +962,7 @@ async def ingest_file(
     _scan_stats["card_only"] += 1
     if fp:
         _update_cache(str(file_path), fp, file_id, "card", result.chunk_count)
+    _maybe_tag_deletable(file_path, ext, "card")
     return result
 
 
@@ -922,10 +974,11 @@ async def _ingest_deep(
     fp: str,
 ) -> IngestResult:
     """Force-deep path: use Gemini dispatcher for full extraction."""
-    # Try Gemini-backed dispatcher
+    # Try Gemini-backed dispatcher (AI call — gated by _AI_SEM)
     try:
         from services.file_processor.dispatcher import extract as dispatch_extract
-        cr = await dispatch_extract(file_bytes, file_path.name)
+        async with _AI_SEM:
+            cr = await dispatch_extract(file_bytes, file_path.name)
         content = (cr.content or "")[:MAX_EMBED_CHARS]
         engine = cr.engine_used or "gemini"
     except Exception:
@@ -1000,6 +1053,22 @@ def search(
     return diverse
 
 
+async def _search_async(
+    query: str,
+    k: int = 5,
+    where: dict | None = None,
+    max_per_file: int = 3,
+) -> list[SearchHit]:
+    """Async search gated by ``_EMBED_SEM``.
+
+    ``search()`` calls ``embed_text(query)`` synchronously.  This wrapper
+    ensures concurrent ``ask()`` calls don't hammer the embedding endpoint
+    in parallel.
+    """
+    async with _EMBED_SEM:
+        return await asyncio.to_thread(search, query, k, where, max_per_file)
+
+
 # ── RAG ──────────────────────────────────────────────────────────────────────
 
 _RAG_SYSTEM = """\
@@ -1051,7 +1120,7 @@ async def ask(
     When ``auto_deepen`` is True, top-5 hits that aren't fully extracted
     get deepened via Gemini before generating the answer.
     """
-    hits = await asyncio.to_thread(search, query, k, where)
+    hits = await _search_async(query, k, where)
     if not hits:
         return AskResult(
             answer="I couldn't find any relevant information in the indexed files.",
@@ -1070,14 +1139,18 @@ async def ask(
         for hit in shallow_hits[:3]:
             fpath = Path(hit.file_path)
             if fpath.exists():
+                # deepen_file → ingest_file → _ingest_async already
+                # acquires _EMBED_SEM internally; _AI_SEM is acquired
+                # inside _ingest_deep around dispatch_extract.
                 result = await deepen_file(fpath, hit.file_id)
                 if result.depth == "deep" and result.chunk_count > 0:
                     deepened.append(hit.file_path)
         if deepened:
-            hits = await asyncio.to_thread(search, query, k, where)
+            hits = await _search_async(query, k, where)
 
     prompt = _build_rag_prompt(query, hits)
-    answer = await generate_text(prompt, system=_RAG_SYSTEM)
+    async with _AI_SEM:
+        answer = await generate_text(prompt, system=_RAG_SYSTEM)
     return AskResult(answer=answer, hits=hits, query=query, deepened_files=deepened)
 
 
