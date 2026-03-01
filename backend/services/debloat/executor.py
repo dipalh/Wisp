@@ -96,14 +96,14 @@ DEBLOAT_OPTIONS = {
                     name="Candy Crush",
                     description="Remove Candy Crush Saga",
                     parameters=["AppId:king.com.CandyCrushSaga"],
-                    default_enabled=True,
+                    default_enabled=False,
                 ),
                 DebloatSubOption(
                     id="remove-preinstalled-weather",
                     name="Weather",
                     description="Remove Weather app",
                     parameters=["AppId:Microsoft.BingWeather"],
-                    default_enabled=True,
+                    default_enabled=False,
                 ),
                 DebloatSubOption(
                     id="remove-preinstalled-maps",
@@ -138,7 +138,7 @@ DEBLOAT_OPTIONS = {
                     name="Windows Tips",
                     description="Remove Windows Tips app",
                     parameters=["AppId:Microsoft.Getstarted"],
-                    default_enabled=True,
+                    default_enabled=False,
                 ),
                 DebloatSubOption(
                     id="remove-preinstalled-xbox",
@@ -211,7 +211,7 @@ DEBLOAT_OPTIONS = {
             description="Stop sending usage data to Microsoft",
             category="privacy",
             parameters=["DisableTelemetry"],
-            default_enabled=True,
+            default_enabled=False,
         ),
         DebloatOption(
             id="disable-location",
@@ -219,7 +219,7 @@ DEBLOAT_OPTIONS = {
             description="Turn off location tracking",
             category="privacy",
             parameters=["DisableLocationServices"],
-            default_enabled=True,
+            default_enabled=False,
         ),
         DebloatOption(
             id="disable-suggestions",
@@ -227,7 +227,7 @@ DEBLOAT_OPTIONS = {
             description="Remove tips, app suggestions, and ads",
             category="privacy",
             parameters=["DisableSuggestions"],
-            default_enabled=True,
+            default_enabled=False,
         ),
         DebloatOption(
             id="disable-activity-history",
@@ -276,7 +276,7 @@ DEBLOAT_OPTIONS = {
                     name="Disable Bing/Copilot in Search",
                     description="Disable Bing web search, Bing AI and Cortana integration",
                     parameters=["DisableBing"],
-                    default_enabled=True,
+                    default_enabled=False,
                 ),
                 DebloatSubOption(
                     id="disable-services-superfetch",
