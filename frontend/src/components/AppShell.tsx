@@ -421,6 +421,8 @@ export default function AppShell() {
                 busy={busy}
                 taggedFiles={taggedFiles}
                 suggestions={suggestions}
+                activeView={activeView}
+                organizeResult={organizeResult}
                 onOpenFile={(path) => {
                     window.wispApi.openFile(path);
                     logActivity('File opened', path.split(/[\\/]/).pop() || path);

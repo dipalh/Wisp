@@ -66,7 +66,7 @@ interface WispApi {
   getUsername: () => string;
   pickFolder: () => Promise<string | null>;
   scanFolder: (folderPath: string) => Promise<TreeNode | null>;
-  organizeFolder: (folderPath: string) => Promise<{ moved: number; skipped: number }>;
+  organizeFolder: (folderPath: string) => Promise<{ moved: number; skipped: number; error?: string; categories?: Record<string, number> }>;
   tagFiles: (payload: { rootPath: string; provider: 'local' | 'api' }) => Promise<TaggedFile[]>;
   suggestDelete: (folderPath: string) => Promise<DeleteSuggestion[]>;
   trashPath: (targetPath: string) => Promise<{ ok: boolean }>;

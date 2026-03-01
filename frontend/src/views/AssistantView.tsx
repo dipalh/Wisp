@@ -432,7 +432,7 @@ export default function AssistantView() {
                 </button>
                 <span className="assistant-voice-bar-sep" />
                 {useWebSpeech
-                    ? <Mic size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} title="Using built-in system TTS" />
+                    ? <span title="Using built-in system TTS" style={{ display: 'flex' }}><Mic size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} /></span>
                     : <Volume2 size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
                 }
                 <span className="assistant-voice-label">{useWebSpeech ? 'System' : 'ElevenLabs'}</span>

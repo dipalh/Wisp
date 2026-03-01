@@ -11,6 +11,8 @@ MODEL_ID = "eleven_turbo_v2_5"  # lowest latency, best for real-time conversatio
 
 
 def _synthesize(text: str, voice_id: str) -> bytes:
+    if not ELEVENLABS_API_KEY:
+        raise ValueError("ELEVENLABS_API_KEY is not set in .env")
     client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
     chunks = client.text_to_speech.convert(
         voice_id=voice_id,
@@ -29,6 +31,8 @@ async def speak(text: str, voice_id: str = DEFAULT_VOICE_ID) -> bytes:
 
 async def list_voices() -> list[dict]:
     """Return available ElevenLabs voices."""
+    if not ELEVENLABS_API_KEY:
+        return []
     def _get():
         client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
         resp = client.voices.get_all()
