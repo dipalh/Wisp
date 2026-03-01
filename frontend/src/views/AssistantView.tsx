@@ -132,6 +132,7 @@ export default function AssistantView() {
     );
     const [showVoicePanel, setShowVoicePanel] = useState(false);
     const [speakingMsgId, setSpeakingMsgId] = useState<string | null>(null);
+    const [missingPaths, setMissingPaths] = useState<Set<string>>(new Set());
     const [autoSpeak, setAutoSpeak] = useState<boolean>(
         () => localStorage.getItem('wisp_auto_speak') === 'true'
     );
@@ -285,20 +286,30 @@ export default function AssistantView() {
                                         <span className="assistant-source-name" title={src}>
                                             {getFileName(src)}
                                         </span>
-                                        <button
-                                            className="assistant-source-btn"
-                                            title="Show in folder"
-                                            onClick={() => (window as any).wispApi.showInFolder(src)}
-                                        >
-                                            <FolderOpen size={11} />
-                                        </button>
-                                        <button
-                                            className="assistant-source-btn"
-                                            title="Open file"
-                                            onClick={() => (window as any).wispApi.openPath(src)}
-                                        >
-                                            Open
-                                        </button>
+                                        {missingPaths.has(src) ? (
+                                            <span className="assistant-source-missing">Not found</span>
+                                        ) : (<>
+                                            <button
+                                                className="assistant-source-btn"
+                                                title="Show in folder"
+                                                onClick={async () => {
+                                                    const r = await (window as any).wispApi.showInFolder(src);
+                                                    if (!r.ok) setMissingPaths(p => new Set(p).add(src));
+                                                }}
+                                            >
+                                                <FolderOpen size={11} />
+                                            </button>
+                                            <button
+                                                className="assistant-source-btn"
+                                                title="Open file"
+                                                onClick={async () => {
+                                                    const r = await (window as any).wispApi.openPath(src);
+                                                    if (!r.ok) setMissingPaths(p => new Set(p).add(src));
+                                                }}
+                                            >
+                                                Open
+                                            </button>
+                                        </>)}
                                     </div>
                                 ))}
                             </div>

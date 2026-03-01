@@ -1607,7 +1607,7 @@ textarea {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-top: var(--sp-3);
+  margin-top: 2px;
   padding: 3px var(--sp-3);
   font-size: 10px;
   font-weight: 500;
@@ -1692,6 +1692,14 @@ textarea {
   color: var(--accent-text);
   background: var(--accent-soft);
   border-color: var(--accent-border);
+}
+
+.assistant-source-missing {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  font-style: italic;
+  flex-shrink: 0;
 }
 
 .assistant-voice-bar {

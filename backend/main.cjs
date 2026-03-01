@@ -589,12 +589,23 @@ ipcMain.handle('jobs:indexedFiles', async (_, jobId) => {
 });
 
 ipcMain.handle('shell:showInFolder', (_, filePath) => {
-  shell.showItemInFolder(filePath);
+  const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(app.getPath('home'), filePath);
+  if (!fssync.existsSync(resolved)) {
+    // Fall back to opening the parent folder if it exists
+    const parent = path.dirname(resolved);
+    if (fssync.existsSync(parent)) shell.openPath(parent);
+    return { ok: false, error: 'File not found at stored path' };
+  }
+  shell.showItemInFolder(resolved);
   return { ok: true };
 });
 
 ipcMain.handle('shell:openPath', async (_, filePath) => {
-  const err = await shell.openPath(filePath);
+  const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(app.getPath('home'), filePath);
+  if (!fssync.existsSync(resolved)) {
+    return { ok: false, error: 'File not found at stored path' };
+  }
+  const err = await shell.openPath(resolved);
   return { ok: !err, error: err || null };
 });
 
