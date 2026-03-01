@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import {
     ScanText, Upload, Copy, Check, RotateCcw, AlertCircle,
-    ChevronLeft, ChevronRight, Scissors, FileImage, Mic,
+    ChevronLeft, ChevronRight, Scissors, FileImage, Mic, Volume2, Square,
 } from 'lucide-react';
 import * as pdfjsLib from 'pdfjs-dist';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
@@ -63,7 +63,9 @@ export default function ExtractView() {
     const [errorMsg, setErrorMsg]     = useState('');
     const [dragging, setDragging]     = useState(false);
     const [copied, setCopied]         = useState(false);
+    const [speaking, setSpeaking]     = useState(false);
     const [loadingLabel, setLoadingLabel] = useState('Extracting text from');
+    const audioRef = useRef<HTMLAudioElement | null>(null);
 
     // PDF viewer state
     const [pdfDoc, setPdfDoc]           = useState<PDFDocumentProxy | null>(null);
@@ -288,6 +290,36 @@ export default function ExtractView() {
         }, 'image/png');
     };
 
+    // ── Read aloud ─────────────────────────────────────────────────────────────
+
+    const stopSpeaking = () => {
+        if (audioRef.current) {
+            audioRef.current.pause();
+            audioRef.current = null;
+        }
+        setSpeaking(false);
+    };
+
+    const speakOcr = async (text: string) => {
+        if (speaking) { stopSpeaking(); return; }
+        setSpeaking(true);
+        try {
+            const b64: string = await (window as any).wispApi.speakText(text);
+            const raw  = atob(b64);
+            const bytes = new Uint8Array(raw.length);
+            for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+            const blob = new Blob([bytes], { type: 'audio/mpeg' });
+            const url  = URL.createObjectURL(blob);
+            const audio = new Audio(url);
+            audioRef.current = audio;
+            audio.onended = () => { setSpeaking(false); URL.revokeObjectURL(url); };
+            audio.onerror = () => { setSpeaking(false); URL.revokeObjectURL(url); };
+            await audio.play();
+        } catch {
+            setSpeaking(false);
+        }
+    };
+
     // ── Copy / Reset ───────────────────────────────────────────────────────────
 
     const handleCopy = async () => {
@@ -299,6 +331,7 @@ export default function ExtractView() {
     };
 
     const handleReset = () => {
+        stopSpeaking();
         setState('idle');
         setFileName('');
         setResult(null);
@@ -526,6 +559,15 @@ export default function ExtractView() {
                     {result.confidence != null && (
                         <span className="chip">{Math.round(result.confidence * 100)}% conf.</span>
                     )}
+                    <button
+                        className="btn btn-secondary extract-result-copy"
+                        onClick={() => speakOcr(result.text)}
+                        disabled={!result.text?.trim()}
+                        title={speaking ? 'Stop playback' : 'Read aloud'}
+                    >
+                        {speaking ? <Square size={13} /> : <Volume2 size={13} />}
+                        {speaking ? 'Stop' : 'Read aloud'}
+                    </button>
                     <button
                         className="btn btn-secondary extract-result-copy"
                         onClick={handleCopy}

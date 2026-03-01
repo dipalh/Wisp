@@ -12,4 +12,5 @@ contextBridge.exposeInMainWorld('wispApi', {
   extractText:          (filePath)           => ipcRenderer.invoke('ocr:extract', filePath),
   extractTextFromBuffer:(base64, filename)   => ipcRenderer.invoke('ocr:extractBuffer', base64, filename),
   transcribeFile:       (filePath)           => ipcRenderer.invoke('transcribe:file', filePath),
+  speakText:            (text)               => ipcRenderer.invoke('tts:speak', text),
 });

@@ -541,6 +541,20 @@ ipcMain.handle('ocr:extractBuffer', async (_, base64Data, filename) => {
   return resp.json();
 });
 
+ipcMain.handle('tts:speak', async (_, text) => {
+  const resp = await fetch(`${apiUrl}/api/v1/tts/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+  if (!resp.ok) {
+    const detail = await resp.text().catch(() => '');
+    throw new Error(`TTS failed (HTTP ${resp.status}): ${detail}`);
+  }
+  const buf = await resp.arrayBuffer();
+  return Buffer.from(buf).toString('base64');
+});
+
 app.whenReady().then(() => {
   createWindow();
   app.on('activate', () => {
