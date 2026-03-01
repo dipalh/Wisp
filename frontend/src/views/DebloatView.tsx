@@ -47,24 +47,8 @@ export default function DebloatView({ busy }: DebloatViewProps) {
                 const data = await res.json();
                 setOptions(data.options);
 
-                // Pre-select default options (sensible defaults, user can uncheck)
-                const defaults = new Set<string>();
-                Object.values(data.options).forEach((categoryOptions: any) => {
-                    (categoryOptions as DebloatOption[]).forEach((opt) => {
-                        if (opt.default_enabled) {
-                            defaults.add(opt.id);
-                        }
-                        // Also add default sub-options
-                        if (opt.sub_options) {
-                            opt.sub_options.forEach((sub) => {
-                                if (sub.default_enabled) {
-                                    defaults.add(sub.id);
-                                }
-                            });
-                        }
-                    });
-                });
-                setSelectedOptions(defaults);
+                // No preselected options - user must choose
+                setSelectedOptions(new Set());
             } catch (err) {
                 console.error('Failed to load debloat options:', err);
             } finally {

@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import {
     ScanText, Upload, Copy, Check, RotateCcw, AlertCircle,
-    ChevronLeft, ChevronRight, Scissors, FileImage, Mic, Volume2, Square,
+    ChevronLeft, ChevronRight, Scissors, FileImage, Mic, Volume2, Square, Settings2,
 } from 'lucide-react';
 import * as pdfjsLib from 'pdfjs-dist';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
@@ -45,6 +45,13 @@ const AUDIO_VIDEO_EXTS = new Set([
     'mp4', 'mov', 'webm', 'mkv',
 ]);
 
+type Voice = {
+    voice_id: string;
+    name: string;
+    category: string | null;
+    preview_url: string | null;
+};
+
 // Speaker colours — cycles if more than 5 speakers
 const SPEAKER_COLORS = [
     'var(--accent)',
@@ -63,9 +70,16 @@ export default function ExtractView() {
     const [errorMsg, setErrorMsg]     = useState('');
     const [dragging, setDragging]     = useState(false);
     const [copied, setCopied]         = useState(false);
-    const [speaking, setSpeaking]     = useState(false);
+    const [speaking, setSpeaking]         = useState(false);
     const [loadingLabel, setLoadingLabel] = useState('Extracting text from');
-    const audioRef = useRef<HTMLAudioElement | null>(null);
+    const [voices, setVoices]             = useState<Voice[]>([]);
+    const [selectedVoiceId, setSelectedVoiceId] = useState<string>(
+        () => localStorage.getItem('wisp_tts_voice') ?? 'pNInz6obpgDQGcFmaJgB'
+    );
+    const [showVoicePanel, setShowVoicePanel]   = useState(false);
+    const [previewingVoiceId, setPreviewingVoiceId] = useState<string | null>(null);
+    const audioRef        = useRef<HTMLAudioElement | null>(null);
+    const previewAudioRef = useRef<HTMLAudioElement | null>(null);
 
     // PDF viewer state
     const [pdfDoc, setPdfDoc]           = useState<PDFDocumentProxy | null>(null);
@@ -106,6 +120,15 @@ export default function ExtractView() {
     useEffect(() => {
         if (pdfDoc && state === 'pdf-select') renderPage(pdfDoc, pageNum);
     }, [pdfDoc, pageNum, state, renderPage]);
+
+    useEffect(() => {
+        (window as any).wispApi.getVoices()
+            .then((data: { voices: Voice[] }) => setVoices(data.voices))
+            .catch(() => {});
+        const onVoiceChanged = (e: Event) => setSelectedVoiceId((e as CustomEvent).detail);
+        window.addEventListener('wisp:voiceChanged', onVoiceChanged);
+        return () => window.removeEventListener('wisp:voiceChanged', onVoiceChanged);
+    }, []);
 
     // ── Canvas selection ───────────────────────────────────────────────────────
 
@@ -300,11 +323,26 @@ export default function ExtractView() {
         setSpeaking(false);
     };
 
+    const previewVoice = (url: string | null, voiceId: string) => {
+        if (previewAudioRef.current) {
+            previewAudioRef.current.pause();
+            previewAudioRef.current = null;
+        }
+        if (previewingVoiceId === voiceId) { setPreviewingVoiceId(null); return; }
+        if (!url) return;
+        const audio = new Audio(url);
+        previewAudioRef.current = audio;
+        setPreviewingVoiceId(voiceId);
+        audio.onended = () => { setPreviewingVoiceId(null); previewAudioRef.current = null; };
+        audio.onerror = () => { setPreviewingVoiceId(null); previewAudioRef.current = null; };
+        audio.play();
+    };
+
     const speakOcr = async (text: string) => {
         if (speaking) { stopSpeaking(); return; }
         setSpeaking(true);
         try {
-            const b64: string = await (window as any).wispApi.speakText(text);
+            const b64: string = await (window as any).wispApi.speakText(text, selectedVoiceId);
             const raw  = atob(b64);
             const bytes = new Uint8Array(raw.length);
             for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
@@ -569,6 +607,14 @@ export default function ExtractView() {
                         {speaking ? 'Stop' : 'Read aloud'}
                     </button>
                     <button
+                        className={`btn btn-secondary extract-result-copy${showVoicePanel ? ' voice-btn-active' : ''}`}
+                        onClick={() => setShowVoicePanel(v => !v)}
+                        title="Change voice"
+                    >
+                        <Settings2 size={13} />
+                        Voice
+                    </button>
+                    <button
                         className="btn btn-secondary extract-result-copy"
                         onClick={handleCopy}
                         title="Copy to clipboard"
@@ -577,6 +623,39 @@ export default function ExtractView() {
                         {copied ? 'Copied' : 'Copy'}
                     </button>
                 </div>
+                {showVoicePanel && (
+                    <div className="voice-panel">
+                        <p className="voice-panel-label">Select voice</p>
+                        <div className="voice-list">
+                            {voices.map(v => (
+                                <div
+                                    key={v.voice_id}
+                                    className={`voice-item${v.voice_id === selectedVoiceId ? ' selected' : ''}`}
+                                    onClick={() => {
+                                        setSelectedVoiceId(v.voice_id);
+                                        localStorage.setItem('wisp_tts_voice', v.voice_id);
+                                        window.dispatchEvent(new CustomEvent('wisp:voiceChanged', { detail: v.voice_id }));
+                                    }}
+                                >
+                                    <span className="voice-item-name">{v.name}</span>
+                                    {v.category && <span className="chip">{v.category}</span>}
+                                    {v.preview_url && (
+                                        <button
+                                            className="btn btn-secondary voice-preview-btn"
+                                            onClick={(e) => { e.stopPropagation(); previewVoice(v.preview_url, v.voice_id); }}
+                                            title={previewingVoiceId === v.voice_id ? 'Stop preview' : 'Preview voice'}
+                                        >
+                                            {previewingVoiceId === v.voice_id ? <Square size={11} /> : <Volume2 size={11} />}
+                                        </button>
+                                    )}
+                                </div>
+                            ))}
+                            {voices.length === 0 && (
+                                <p className="voice-panel-empty">No voices loaded.</p>
+                            )}
+                        </div>
+                    </div>
+                )}
                 <div className="extract-result-body">
                     {result.text?.trim() ? (
                         <pre className="extract-result-text">{result.text}</pre>

@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from services.tts.speaker import DEFAULT_VOICE_ID, speak
+from services.tts.speaker import DEFAULT_VOICE_ID, list_voices, speak
 
 router = APIRouter()
 
@@ -12,6 +12,15 @@ router = APIRouter()
 class TTSRequest(BaseModel):
     text: str
     voice_id: str = DEFAULT_VOICE_ID
+
+
+@router.get("/voices", summary="List available TTS voices")
+async def get_voices():
+    try:
+        voices = await list_voices()
+        return {"voices": voices}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not fetch voices: {e}")
 
 
 @router.post("/", summary="Convert text to speech via ElevenLabs")

@@ -541,6 +541,28 @@ ipcMain.handle('ocr:extractBuffer', async (_, base64Data, filename) => {
   return resp.json();
 });
 
+ipcMain.handle('tts:speak', async (_, text, voiceId) => {
+  const body = { text };
+  if (voiceId) body.voice_id = voiceId;
+  const resp = await fetch(`${apiUrl}/api/v1/tts/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const detail = await resp.text().catch(() => '');
+    throw new Error(`TTS failed (HTTP ${resp.status}): ${detail}`);
+  }
+  const buf = await resp.arrayBuffer();
+  return Buffer.from(buf).toString('base64');
+});
+
+ipcMain.handle('tts:getVoices', async () => {
+  const resp = await fetch(`${apiUrl}/api/v1/tts/voices`);
+  if (!resp.ok) throw new Error(`Get voices failed (HTTP ${resp.status})`);
+  return resp.json();
+});
+
 ipcMain.handle('jobs:startScan', async (_, folders) => {
   const resp = await fetch(`${apiUrl}/api/v1/jobs/scan`, {
     method: 'POST',

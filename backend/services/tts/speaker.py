@@ -25,3 +25,20 @@ def _synthesize(text: str, voice_id: str) -> bytes:
 async def speak(text: str, voice_id: str = DEFAULT_VOICE_ID) -> bytes:
     """Convert text to speech. Returns raw MP3 bytes."""
     return await asyncio.to_thread(_synthesize, text, voice_id)
+
+
+async def list_voices() -> list[dict]:
+    """Return available ElevenLabs voices."""
+    def _get():
+        client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
+        resp = client.voices.get_all()
+        return [
+            {
+                "voice_id": v.voice_id,
+                "name": v.name,
+                "category": getattr(v, "category", None),
+                "preview_url": getattr(v, "preview_url", None),
+            }
+            for v in resp.voices
+        ]
+    return await asyncio.to_thread(_get)
