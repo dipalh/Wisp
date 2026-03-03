@@ -64,7 +64,7 @@ export default function Sidebar({ activeView, onViewChange }: SidebarProps) {
 
             <div className="sidebar-brand">
                 <WispLogo />
-                <span className="lolXD sidebar-brand-wordmark">isp</span>
+                {/* <span className="lolXD sidebar-brand-wordmark">isp</span> */}
             </div>
 
             {sections.map(section => (

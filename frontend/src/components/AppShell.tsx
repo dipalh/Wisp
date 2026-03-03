@@ -1,9 +1,10 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Sidebar from './Sidebar';
 import ContextPanel from './ContextPanel';
 import ErrorBanner from './ErrorBanner';
 import ScanModal from './ScanModal';
 import OrganizeModal from './OrganizeModal';
+import UndoToast from './UndoToast';
 import ScanView from '../views/ScanView';
 import CleanView from '../views/CleanView';
 import VisualizeView from '../views/VisualizeView';
@@ -116,6 +117,12 @@ export default function AppShell() {
     const [scanModalOpen, setScanModalOpen] = useState(false);
     const [lastCompletedJobId, setLastCompletedJobId] = useState<string | null>(null);
 
+    // Undo toast
+    const [undoToastVisible, setUndoToastVisible] = useState(false);
+    const [undoLabel, setUndoLabel] = useState('');
+    const [undoState, setUndoState] = useState<'idle' | 'undoing' | 'done' | 'error'>('idle');
+    const [undoResultMsg, setUndoResultMsg] = useState('');
+
     // Activity log
     const [activityLog, setActivityLog] = useState<ActivityEntry[]>([]);
     const activityIdRef = useRef(0);
@@ -128,6 +135,60 @@ export default function AppShell() {
         };
         setActivityLog((prev) => [entry, ...prev].slice(0, 50));
     }, []);
+
+    // ── Undo handler ────────────────────────────────────────────────────
+    const performUndo = useCallback(async () => {
+        setUndoState('undoing');
+        try {
+            const res = await (window as any).wispApi.undoOrganize();
+            if (!res.ok) {
+                setUndoState('error');
+                setUndoResultMsg(res.error || 'Nothing to undo');
+                return;
+            }
+            setUndoState('done');
+            setUndoResultMsg(
+                `Restored ${res.reversed} file${res.reversed !== 1 ? 's' : ''} to original location${res.reversed !== 1 ? 's' : ''}`
+                + (res.failed > 0 ? ` (${res.failed} failed)` : '')
+            );
+            setOrganizeResult(null);
+            logActivity('Undo organize', `${res.reversed} files restored`);
+            // Refresh tree
+            if (rootFolders[0]) {
+                try {
+                    const scanned = await window.wispApi.scanFolder(rootFolders[0]);
+                    setTree(scanned);
+                } catch { /* ignore */ }
+            }
+            setStatusText('Organize undone — files restored');
+        } catch (e: any) {
+            setUndoState('error');
+            setUndoResultMsg(e?.message ?? 'Undo failed');
+        }
+    }, [rootFolders, logActivity]);
+
+    // ── Listen for Cmd+Z trigger and undo availability from main process ──
+    useEffect(() => {
+        const api = window as any;
+        if (!api.wispApi?.onUndoTriggered) return;
+
+        const removeUndoTrigger = api.wispApi.onUndoTriggered(() => {
+            performUndo();
+        });
+
+        const removeUndoAvailable = api.wispApi.onUndoAvailable?.((data: { canUndo: boolean; label: string }) => {
+            if (data.canUndo) {
+                setUndoLabel(data.label);
+                setUndoState('idle');
+                setUndoToastVisible(true);
+            }
+        });
+
+        return () => {
+            removeUndoTrigger?.();
+            removeUndoAvailable?.();
+        };
+    }, [performUndo]);
 
     // File count from tree
     const fileCount = (() => {
@@ -440,6 +501,15 @@ export default function AppShell() {
                 onClose={() => setOrganizeModalOpen(false)}
                 onError={onError}
                 onOrganize={runOrganize}
+            />
+
+            <UndoToast
+                visible={undoToastVisible}
+                label={undoLabel}
+                state={undoState}
+                resultMessage={undoResultMsg}
+                onUndo={performUndo}
+                onDismiss={() => setUndoToastVisible(false)}
             />
         </div>
     );

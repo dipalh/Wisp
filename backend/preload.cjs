@@ -23,4 +23,20 @@ contextBridge.exposeInMainWorld('wispApi', {
   getIndexedFiles: (jobId) => ipcRenderer.invoke('jobs:indexedFiles', jobId),
   openFile: (filePath) => ipcRenderer.invoke('file:open', filePath),
   searchMemory: (query, opts) => ipcRenderer.invoke('memory:search', query, opts),
+
+  // ── Undo support ──────────────────────────────────────────────────────
+  undoOrganize:    ()         => ipcRenderer.invoke('organize:undo'),
+  canUndoOrganize: ()         => ipcRenderer.invoke('organize:canUndo'),
+  /** Register a callback for when Cmd+Z / Edit > Undo is pressed and our undo stack has entries */
+  onUndoTriggered: (callback) => {
+    const handler = () => callback();
+    ipcRenderer.on('undo:trigger', handler);
+    return () => ipcRenderer.removeListener('undo:trigger', handler);
+  },
+  /** Register a callback for when undo availability changes (after organize or undo) */
+  onUndoAvailable: (callback) => {
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('undo:available', handler);
+    return () => ipcRenderer.removeListener('undo:available', handler);
+  },
 });

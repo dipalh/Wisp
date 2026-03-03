@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell, Menu } = require('electron');
 const fs = require('node:fs/promises');
 const fssync = require('node:fs');
 const path = require('node:path');
@@ -16,6 +16,11 @@ const TREE_CACHE_TTL_MS = 60_000; // 1 minute
 const MAX_SCAN_FILES = 600;
 const MAX_TREE_DEPTH = 8;
 const MAX_WALK_DEPTH = 10;
+
+// ── Undo stack for bulk file operations ────────────────────────────────────────
+// Each entry: { type: 'organize', timestamp, rootPath, moves: [{ src, dest }] }
+const UNDO_STACK = [];
+const MAX_UNDO_ENTRIES = 20;
 
 const PRIORITY_KEYWORDS = {
   high: ['important', 'urgent', 'critical', 'priority', 'asap', 'now'],
@@ -416,7 +421,8 @@ ipcMain.handle('folder:organize', async (_, rootPath) => {
 
     let moved = 0;
     let skipped = 0;
-    const categories = {}; // category -> count of files moved
+    const categories = {};
+    const moves = []; // Track every move for undo
 
     for (const file of files) {
       const category = detectCategory(file.name);
@@ -429,11 +435,28 @@ ipcMain.handle('folder:organize', async (_, rootPath) => {
       try {
         await fs.mkdir(destDir, { recursive: true });
         await fs.rename(src, dest);
+        moves.push({ src, dest });
         moved++;
         categories[category] = (categories[category] || 0) + 1;
       } catch (moveErr) {
         console.warn(`[organize] could not move ${file.name}: ${moveErr.message}`);
         skipped++;
+      }
+    }
+
+    // Record in undo stack so Cmd+Z can reverse this
+    if (moves.length > 0) {
+      UNDO_STACK.push({
+        type: 'organize',
+        timestamp: Date.now(),
+        rootPath,
+        moves,
+        categories: { ...categories },
+      });
+      if (UNDO_STACK.length > MAX_UNDO_ENTRIES) UNDO_STACK.shift();
+      // Notify renderer that undo is now available
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.webContents.send('undo:available', { canUndo: true, label: `Undo organize (${moved} files)` });
       }
     }
 
@@ -445,6 +468,66 @@ ipcMain.handle('folder:organize', async (_, rootPath) => {
     return { moved: 0, skipped: 0, categories: {}, error: err.message };
   }
 })
+
+// ── Undo handlers ──────────────────────────────────────────────────────────────
+
+ipcMain.handle('organize:canUndo', () => {
+  if (UNDO_STACK.length === 0) return { canUndo: false, label: '' };
+  const last = UNDO_STACK[UNDO_STACK.length - 1];
+  return { canUndo: true, label: `Undo organize (${last.moves.length} files)` };
+});
+
+ipcMain.handle('organize:undo', async () => {
+  if (UNDO_STACK.length === 0) {
+    return { ok: false, error: 'Nothing to undo' };
+  }
+
+  const action = UNDO_STACK.pop();
+  const reversed = [];
+  const failed = [];
+
+  // Reverse moves in reverse order
+  for (let i = action.moves.length - 1; i >= 0; i--) {
+    const { src, dest } = action.moves[i];
+    try {
+      // Move file back from dest → src
+      await fs.rename(dest, src);
+      reversed.push({ src: dest, dest: src, name: path.basename(src) });
+    } catch (err) {
+      console.warn(`[undo] could not reverse ${dest} → ${src}: ${err.message}`);
+      failed.push({ src: dest, dest: src, name: path.basename(src), error: err.message });
+    }
+  }
+
+  // Try to remove empty category directories that were created
+  const dirsToCheck = new Set(action.moves.map(m => path.dirname(m.dest)));
+  for (const dir of dirsToCheck) {
+    try {
+      const remaining = await fs.readdir(dir);
+      if (remaining.length === 0) {
+        await fs.rmdir(dir);
+        console.log(`[undo] removed empty directory: ${dir}`);
+      }
+    } catch { /* dir may not exist or not be empty, that's fine */ }
+  }
+
+  TREE_CACHE.delete(action.rootPath);
+
+  // Notify renderer of updated undo state
+  const canUndo = UNDO_STACK.length > 0;
+  const label = canUndo ? `Undo organize (${UNDO_STACK[UNDO_STACK.length - 1].moves.length} files)` : '';
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send('undo:available', { canUndo, label });
+  }
+
+  console.log(`[undo] reversed ${reversed.length} moves, ${failed.length} failed`);
+  return {
+    ok: true,
+    reversed: reversed.length,
+    failed: failed.length,
+    details: { reversed, failed },
+  };
+});
 
 ipcMain.handle('files:tag', async (_, payload) => {
   const { rootPath, provider } = payload;
@@ -650,6 +733,51 @@ ipcMain.on('app:getUsername', (event) => {
 });
 
 app.whenReady().then(() => {
+  // ── Build application menu with Edit > Undo wired to our undo stack ────────
+  const isMac = process.platform === 'darwin';
+
+  const editMenu = {
+    label: 'Edit',
+    submenu: [
+      {
+        label: 'Undo',
+        accelerator: 'CmdOrCtrl+Z',
+        click: async () => {
+          // First try our undo stack (for organize operations)
+          if (UNDO_STACK.length > 0) {
+            const win = BrowserWindow.getFocusedWindow();
+            if (win) win.webContents.send('undo:trigger');
+            return;
+          }
+          // Fall through to native undo for text fields
+          const win = BrowserWindow.getFocusedWindow();
+          if (win) win.webContents.undo();
+        },
+      },
+      {
+        label: 'Redo',
+        accelerator: isMac ? 'Shift+CmdOrCtrl+Z' : 'CmdOrCtrl+Y',
+        role: 'redo',
+      },
+      { type: 'separator' },
+      { label: 'Cut', accelerator: 'CmdOrCtrl+X', role: 'cut' },
+      { label: 'Copy', accelerator: 'CmdOrCtrl+C', role: 'copy' },
+      { label: 'Paste', accelerator: 'CmdOrCtrl+V', role: 'paste' },
+      { label: 'Select All', accelerator: 'CmdOrCtrl+A', role: 'selectAll' },
+    ],
+  };
+
+  const template = [
+    ...(isMac ? [{ role: 'appMenu' }] : []),
+    { role: 'fileMenu' },
+    editMenu,
+    { role: 'viewMenu' },
+    { role: 'windowMenu' },
+  ];
+
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
+
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
