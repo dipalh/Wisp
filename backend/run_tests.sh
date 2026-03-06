@@ -4,6 +4,12 @@
 #        ./run_tests.sh -v     (verbose)
 set -e
 cd "$(dirname "$0")"
+PYTHON_BIN="./venv/bin/python"
+
+if [ ! -x "$PYTHON_BIN" ]; then
+  echo "Missing backend virtualenv interpreter at $PYTHON_BIN" >&2
+  exit 1
+fi
 
 TESTS=(
   tests/test_job_db.py
@@ -16,4 +22,4 @@ TESTS=(
   tests/test_search_api.py
 )
 
-python -m pytest "${TESTS[@]}" "$@"
+"$PYTHON_BIN" -m pytest "${TESTS[@]}" "$@"

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import hashlib
 import logging
 import sys
 import time
@@ -25,6 +26,7 @@ if _backend_dir not in sys.path:
 
 from celery_app import app
 from services.job_db import (
+    reconcile_indexed_files,
     set_status,
     update_progress,
     upsert_indexed_file,
@@ -123,19 +125,25 @@ async def _run_pipeline(job_id: str, all_files: list[Path]) -> int:
 def scan_and_index(job_id: str, folder_paths: list[str]) -> None:
     """Walk folders, embed every file via the 3-layer pipeline, track progress."""
     try:
-        from services.ingestor.scanner import collect_files
+        from services.ingestor.scanner import collect_scan_report
 
         set_status(job_id, "running")
         update_progress(job_id, 0, 0, "Enumerating files\u2026")
 
         all_files: list[Path] = []
+        scan_issues = []
+        scanned_roots: list[str] = []
         for folder in folder_paths:
             root = Path(folder)
             if root.is_dir():
-                all_files.extend(collect_files(root))
+                scanned_roots.append(str(root.resolve()))
+                files, issues = collect_scan_report(root)
+                all_files.extend(files)
+                scan_issues.extend(issues)
 
         total = len(all_files)
         if total == 0:
+            reconcile_indexed_files(job_id, scanned_roots)
             set_status(job_id, "success", "No files found in the selected folders")
             return
 
@@ -147,6 +155,25 @@ def scan_and_index(job_id: str, folder_paths: list[str]) -> None:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             indexed = pool.submit(asyncio.run, _run_pipeline(job_id, all_files)).result()
 
+        for issue in scan_issues:
+            upsert_indexed_file(
+                file_id=hashlib.sha256(f"scan-issue:{issue.path}".encode()).hexdigest()[:16],
+                job_id=job_id,
+                file_path=str(issue.path),
+                name=issue.path.name,
+                ext=issue.path.suffix.lower(),
+                depth="card",
+                chunk_count=0,
+                engine="scanner",
+                is_deletable=False,
+                tagged_os=False,
+                file_state=issue.file_state,
+                fingerprint="",
+                error_code=issue.error_code,
+                error_message=issue.error_message,
+            )
+
+        reconcile_indexed_files(job_id, scanned_roots)
         set_status(
             job_id, "success",
             f"Scan complete \u2014 {indexed}/{total} files indexed",

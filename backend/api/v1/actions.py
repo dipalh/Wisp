@@ -63,8 +63,10 @@ async def apply_action(action_id: str):
     try:
         return execute_action(action_id)
     except ExecutionError as exc:
-        status = 404 if "not found" in str(exc).lower() else 422
-        raise HTTPException(status_code=status, detail=str(exc))
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"code": exc.code, "message": str(exc)},
+        )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Execution failed: {exc}")
 

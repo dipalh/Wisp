@@ -1,5 +1,7 @@
 .PHONY: test test-v lint
 
+PYTHON = ./venv/bin/python
+
 # Canonical test command — run this, not `pytest tests/`.
 # Some legacy test files (test_deletable.py etc.) use custom runners
 # and are not pytest-compatible.  This target runs only the supported
@@ -14,14 +16,14 @@ TESTS = tests/test_job_db.py \
         tests/test_search_api.py
 
 test:
-	python -m pytest $(TESTS) -q
+	$(PYTHON) -m pytest $(TESTS) -q
 
 test-v:
-	python -m pytest $(TESTS) -v
+	$(PYTHON) -m pytest $(TESTS) -v
 
 lint:
-	python -m py_compile services/job_db.py
-	python -m py_compile services/ingestor/scanner.py
-	python -m py_compile services/os_tags/deletable.py
-	python -m py_compile tasks/scan.py
+	$(PYTHON) -m py_compile services/job_db.py
+	$(PYTHON) -m py_compile services/ingestor/scanner.py
+	$(PYTHON) -m py_compile services/os_tags/deletable.py
+	$(PYTHON) -m py_compile tasks/scan.py
 	@echo "All files compile OK"

@@ -13,6 +13,7 @@ Exclusion rules
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 MAX_DEPTH = 4
@@ -34,6 +35,14 @@ _SKIP_FILES = frozenset({
 _SKIP_SUFFIXES = frozenset({"-wal", "-shm"})
 
 _DEFAULT_MAX_FILE_SIZE_MB = 100
+
+
+@dataclass(frozen=True)
+class ScanIssue:
+    path: Path
+    file_state: str
+    error_code: str
+    error_message: str
 
 
 def _skip_dir(name: str) -> bool:
@@ -79,6 +88,19 @@ def collect_files(
     max_depth: int = MAX_DEPTH,
     max_file_size_mb: int | None = None,
 ) -> list[Path]:
+    files, _issues = collect_scan_report(
+        root,
+        max_depth=max_depth,
+        max_file_size_mb=max_file_size_mb,
+    )
+    return files
+
+
+def collect_scan_report(
+    root: Path,
+    max_depth: int = MAX_DEPTH,
+    max_file_size_mb: int | None = None,
+) -> tuple[list[Path], list[ScanIssue]]:
     """Recursively collect all files under *root*, skipping noise.
 
     Args:
@@ -88,39 +110,82 @@ def collect_files(
                           env ``WISP_MAX_FILE_SIZE_MB`` or 100.
 
     Returns:
-        Sorted flat list of Path objects for every file found.
+        Sorted flat list of Path objects for every file found plus
+        recoverable scan issues that should be surfaced later.
     """
     max_bytes = _max_file_bytes(max_file_size_mb)
     files: list[Path] = []
+    issues: list[ScanIssue] = []
 
     def _walk(d: Path, depth: int) -> None:
         if depth > max_depth:
             return
         try:
             entries = sorted(d.iterdir())
-        except PermissionError:
+        except PermissionError as exc:
+            issues.append(
+                ScanIssue(
+                    path=d,
+                    file_state="PERMISSION_DENIED",
+                    error_code="PERMISSION_DENIED",
+                    error_message=str(exc),
+                )
+            )
             return
         for item in entries:
-            if item.is_dir():
+            try:
+                is_dir = item.is_dir()
+                is_file = item.is_file()
+            except PermissionError as exc:
+                issues.append(
+                    ScanIssue(
+                        path=item,
+                        file_state="PERMISSION_DENIED",
+                        error_code="PERMISSION_DENIED",
+                        error_message=str(exc),
+                    )
+                )
+                continue
+            if is_dir:
                 if _skip_dir(item.name):
                     continue
                 _walk(item, depth + 1)
-            elif item.is_file():
+            elif is_file:
                 if _skip_file(item.name):
                     continue
                 if max_bytes > 0:
                     try:
                         if item.stat().st_size > max_bytes:
                             continue
+                    except PermissionError as exc:
+                        issues.append(
+                            ScanIssue(
+                                path=item,
+                                file_state="PERMISSION_DENIED",
+                                error_code="PERMISSION_DENIED",
+                                error_message=str(exc),
+                            )
+                        )
+                        continue
                     except OSError:
                         continue
                 elif max_bytes == 0:
                     try:
                         if item.stat().st_size > 0:
                             continue
+                    except PermissionError as exc:
+                        issues.append(
+                            ScanIssue(
+                                path=item,
+                                file_state="PERMISSION_DENIED",
+                                error_code="PERMISSION_DENIED",
+                                error_message=str(exc),
+                            )
+                        )
+                        continue
                     except OSError:
                         continue
                 files.append(item)
 
     _walk(root, 0)
-    return files
+    return files, issues

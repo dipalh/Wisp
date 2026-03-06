@@ -62,6 +62,40 @@ interface AssistantResponse {
   deepened_files: string[];
 }
 
+interface VoiceResult {
+  voices: Array<{
+    voice_id: string;
+    name: string;
+    category: string;
+    preview_url?: string | null;
+    language?: string;
+    accent?: string;
+  }>;
+}
+
+interface OcrResponse {
+  filename: string;
+  text: string;
+  confidence: number;
+}
+
+interface TranscribeResponse {
+  filename: string;
+  text: string;
+  duration_seconds: number;
+}
+
+interface UndoOrganizeResponse {
+  ok: boolean;
+  reversed: number;
+  failed: number;
+  error?: string;
+  details: {
+    reversed: string[];
+    failed: string[];
+  };
+}
+
 interface WispApi {
   getUsername: () => string;
   pickFolder: () => Promise<string | null>;
@@ -70,6 +104,15 @@ interface WispApi {
   tagFiles: (payload: { rootPath: string; provider: 'local' | 'api' }) => Promise<TaggedFile[]>;
   suggestDelete: (folderPath: string) => Promise<DeleteSuggestion[]>;
   trashPath: (targetPath: string) => Promise<{ ok: boolean }>;
+  readFileBase64: (filePath: string) => Promise<string>;
+  pickFileForOcr: () => Promise<string | null>;
+  extractText: (filePath: string) => Promise<OcrResponse>;
+  extractTextFromBuffer: (base64: string, filename?: string) => Promise<OcrResponse>;
+  transcribeFile: (filePath: string) => Promise<TranscribeResponse>;
+  speakText: (text: string, voiceId?: string) => Promise<string | null>;
+  getVoices: () => Promise<VoiceResult>;
+  showInFolder: (filePath: string) => Promise<{ ok: boolean }>;
+  openPath: (filePath: string) => Promise<{ ok: boolean }>;
   startScanJob: (folders: string[]) => Promise<{ job_id: string }>;
   pollJob: (jobId: string) => Promise<{
     job_id: string;
@@ -87,6 +130,10 @@ interface WispApi {
   openFile: (filePath: string) => Promise<{ ok: boolean }>;
   searchMemory: (query: string, opts?: { k?: number; ext?: string }) => Promise<SearchResponse>;
   askAssistant: (query: string, k?: number, autoDeepen?: boolean) => Promise<AssistantResponse>;
+  undoOrganize: () => Promise<UndoOrganizeResponse>;
+  canUndoOrganize: () => Promise<{ canUndo: boolean }>;
+  onUndoTriggered: (callback: () => void) => () => void;
+  onUndoAvailable: (callback: (data: { canUndo: boolean; label: string }) => void) => () => void;
 }
 
 interface Window {

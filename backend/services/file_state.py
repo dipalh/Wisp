@@ -1,0 +1,13 @@
+from __future__ import annotations
+
+from enum import Enum
+
+
+class FileState(str, Enum):
+    DISCOVERED = "DISCOVERED"
+    INDEXED = "INDEXED"
+    STALE = "STALE"
+    MISSING_EXTERNALLY = "MISSING_EXTERNALLY"
+    MOVED_EXTERNALLY = "MOVED_EXTERNALLY"
+    PERMISSION_DENIED = "PERMISSION_DENIED"
+    QUARANTINED = "QUARANTINED"

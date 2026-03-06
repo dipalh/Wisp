@@ -30,7 +30,10 @@ from __future__ import annotations
 import sqlite3
 import time as _time
 from datetime import datetime, timezone
+from hashlib import sha1
 from pathlib import Path
+
+from services.file_state import FileState
 
 _DB_PATH = Path(__file__).resolve().parent.parent / "wisp_jobs.db"
 
@@ -208,9 +211,43 @@ def ensure_indexed_files_table() -> None:
                 engine       TEXT NOT NULL DEFAULT '',
                 is_deletable INTEGER NOT NULL DEFAULT 0,
                 tagged_os    INTEGER NOT NULL DEFAULT 0,
+                file_state   TEXT NOT NULL DEFAULT 'INDEXED',
+                fingerprint  TEXT NOT NULL DEFAULT '',
+                last_seen_job_id TEXT NOT NULL DEFAULT '',
+                error_code   TEXT NOT NULL DEFAULT '',
+                error_message TEXT NOT NULL DEFAULT '',
                 updated_at   TEXT NOT NULL
             )
         """)
+        existing = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(indexed_files)").fetchall()
+        }
+        if "file_state" not in existing:
+            conn.execute(
+                "ALTER TABLE indexed_files "
+                "ADD COLUMN file_state TEXT NOT NULL DEFAULT 'INDEXED'"
+            )
+        if "fingerprint" not in existing:
+            conn.execute(
+                "ALTER TABLE indexed_files "
+                "ADD COLUMN fingerprint TEXT NOT NULL DEFAULT ''"
+            )
+        if "last_seen_job_id" not in existing:
+            conn.execute(
+                "ALTER TABLE indexed_files "
+                "ADD COLUMN last_seen_job_id TEXT NOT NULL DEFAULT ''"
+            )
+        if "error_code" not in existing:
+            conn.execute(
+                "ALTER TABLE indexed_files "
+                "ADD COLUMN error_code TEXT NOT NULL DEFAULT ''"
+            )
+        if "error_message" not in existing:
+            conn.execute(
+                "ALTER TABLE indexed_files "
+                "ADD COLUMN error_message TEXT NOT NULL DEFAULT ''"
+            )
         conn.commit()
     finally:
         conn.close()
@@ -230,17 +267,26 @@ def upsert_indexed_file(
     engine: str,
     is_deletable: bool,
     tagged_os: bool,
+    file_state: str = FileState.INDEXED.value,
+    fingerprint: str | None = None,
+    error_code: str = "",
+    error_message: str = "",
 ) -> None:
     """Insert or update an indexed_files row."""
     def _do():
+        computed_fingerprint = fingerprint
+        if computed_fingerprint is None:
+            computed_fingerprint = file_fingerprint(file_path)
         conn = _connect()
         try:
             conn.execute(
                 """
                 INSERT INTO indexed_files
                     (file_id, job_id, file_path, name, ext, depth,
-                     chunk_count, engine, is_deletable, tagged_os, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     chunk_count, engine, is_deletable, tagged_os,
+                     file_state, fingerprint, last_seen_job_id,
+                     error_code, error_message, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(file_id) DO UPDATE SET
                     job_id       = excluded.job_id,
                     file_path    = excluded.file_path,
@@ -251,6 +297,11 @@ def upsert_indexed_file(
                     engine       = excluded.engine,
                     is_deletable = excluded.is_deletable,
                     tagged_os    = excluded.tagged_os,
+                    file_state   = excluded.file_state,
+                    fingerprint  = excluded.fingerprint,
+                    last_seen_job_id = excluded.last_seen_job_id,
+                    error_code   = excluded.error_code,
+                    error_message = excluded.error_message,
                     updated_at   = excluded.updated_at
                 """,
                 (
@@ -258,12 +309,91 @@ def upsert_indexed_file(
                     chunk_count, engine,
                     1 if is_deletable else 0,
                     1 if tagged_os else 0,
+                    file_state,
+                    computed_fingerprint,
+                    job_id,
+                    error_code,
+                    error_message,
                     _now(),
                 ),
             )
             conn.commit()
         finally:
             conn.close()
+    _with_write_retry(_do)
+
+
+def file_fingerprint(file_path: str) -> str:
+    """Return a rename-stable filesystem fingerprint for reconciliation."""
+    try:
+        stat = Path(file_path).stat()
+    except OSError:
+        return ""
+    raw = f"{stat.st_size}:{stat.st_mtime_ns}".encode("utf-8")
+    return sha1(raw).hexdigest()
+
+
+def _is_under_any_root(file_path: str, roots: list[str]) -> bool:
+    if not roots:
+        return True
+    try:
+        resolved = Path(file_path).resolve()
+    except OSError:
+        return False
+    return any(resolved.is_relative_to(Path(root).resolve()) for root in roots)
+
+
+def reconcile_indexed_files(job_id: str, root_paths: list[str]) -> None:
+    """Reclassify previously indexed rows after a scan completes."""
+
+    def _do():
+        conn = _connect()
+        try:
+            rows = [
+                dict(row)
+                for row in conn.execute(
+                    "SELECT file_id, file_path, fingerprint, last_seen_job_id, file_state "
+                    "FROM indexed_files"
+                ).fetchall()
+            ]
+            scoped_rows = [
+                row for row in rows if _is_under_any_root(row["file_path"], root_paths)
+            ]
+            current_by_fingerprint = {
+                row["fingerprint"]: row
+                for row in scoped_rows
+                if row["last_seen_job_id"] == job_id and row["fingerprint"]
+            }
+
+            for row in scoped_rows:
+                if row["last_seen_job_id"] == job_id:
+                    if row["file_state"] == FileState.PERMISSION_DENIED.value:
+                        state = FileState.PERMISSION_DENIED.value
+                    else:
+                        state = FileState.INDEXED.value
+                elif (
+                    row["fingerprint"]
+                    and row["fingerprint"] in current_by_fingerprint
+                    and current_by_fingerprint[row["fingerprint"]]["file_path"] != row["file_path"]
+                ):
+                    state = FileState.MOVED_EXTERNALLY.value
+                elif not Path(row["file_path"]).exists():
+                    state = FileState.MISSING_EXTERNALLY.value
+                else:
+                    state = FileState.STALE.value
+
+                conn.execute(
+                    """
+                    UPDATE indexed_files
+                    SET file_state = ?, updated_at = ?
+                    WHERE file_id = ?
+                    """,
+                    (state, _now(), row["file_id"]),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
     _with_write_retry(_do)
 
 
