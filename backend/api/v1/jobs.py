@@ -53,6 +53,8 @@ async def poll_job(job_id: str):
         "job_id":           job["job_id"],
         "type":             job["type"],
         "status":           job["status"],
+        "stage":            job["stage"],
+        "stats":            job["stats"],
         "progress_current": job["progress_current"],
         "progress_total":   job["progress_total"],
         "progress_message": job["progress_message"],

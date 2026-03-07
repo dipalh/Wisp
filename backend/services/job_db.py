@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import sqlite3
 import time as _time
+import json
 from datetime import datetime, timezone
 from hashlib import sha1
 from pathlib import Path
@@ -87,6 +88,8 @@ def ensure_table() -> None:
                 job_id           TEXT PRIMARY KEY,
                 type             TEXT NOT NULL,
                 status           TEXT NOT NULL DEFAULT 'queued',
+                stage            TEXT NOT NULL DEFAULT 'QUEUED',
+                stats_json       TEXT NOT NULL DEFAULT '{}',
                 progress_current INTEGER NOT NULL DEFAULT 0,
                 progress_total   INTEGER NOT NULL DEFAULT 0,
                 progress_message TEXT NOT NULL DEFAULT '',
@@ -94,6 +97,18 @@ def ensure_table() -> None:
                 updated_at       TEXT NOT NULL
             )
         """)
+        existing = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(jobs)").fetchall()
+        }
+        if "stage" not in existing:
+            conn.execute(
+                "ALTER TABLE jobs ADD COLUMN stage TEXT NOT NULL DEFAULT 'QUEUED'"
+            )
+        if "stats_json" not in existing:
+            conn.execute(
+                "ALTER TABLE jobs ADD COLUMN stats_json TEXT NOT NULL DEFAULT '{}'"
+            )
         conn.commit()
     finally:
         conn.close()
@@ -111,8 +126,8 @@ def create_job(job_id: str, job_type: str) -> None:
             conn.execute(
                 """
                 INSERT INTO jobs (job_id, type, status, progress_current, progress_total,
-                                  progress_message, created_at, updated_at)
-                VALUES (?, ?, 'queued', 0, 0, '', ?, ?)
+                                  progress_message, stage, stats_json, created_at, updated_at)
+                VALUES (?, ?, 'queued', 0, 0, '', 'QUEUED', '{}', ?, ?)
                 """,
                 (job_id, job_type, now, now),
             )
@@ -131,29 +146,65 @@ def get_job(job_id: str) -> dict | None:
         ).fetchone()
         if row is None:
             return None
-        return dict(row)
+        data = dict(row)
+        data["stats"] = json.loads(data.pop("stats_json", "{}") or "{}")
+        return data
     finally:
         conn.close()
 
 
 def update_progress(
-    job_id: str, current: int, total: int, message: str
+    job_id: str,
+    current: int,
+    total: int,
+    message: str,
+    stage: str | None = None,
+    stats: dict | None = None,
 ) -> None:
     """Update progress fields + updated_at."""
     def _do():
         conn = _connect()
         try:
-            conn.execute(
-                """
-                UPDATE jobs
-                SET progress_current = ?,
-                    progress_total   = ?,
-                    progress_message = ?,
-                    updated_at       = ?
-                WHERE job_id = ?
-                """,
-                (current, total, message, _now(), job_id),
-            )
+            if stage is not None or stats is not None:
+                row = conn.execute(
+                    "SELECT stage, stats_json FROM jobs WHERE job_id = ?",
+                    (job_id,),
+                ).fetchone()
+                current_stage = row["stage"] if row is not None else "QUEUED"
+                current_stats = row["stats_json"] if row is not None else "{}"
+                conn.execute(
+                    """
+                    UPDATE jobs
+                    SET progress_current = ?,
+                        progress_total   = ?,
+                        progress_message = ?,
+                        stage            = ?,
+                        stats_json       = ?,
+                        updated_at       = ?
+                    WHERE job_id = ?
+                    """,
+                    (
+                        current,
+                        total,
+                        message,
+                        stage or current_stage,
+                        json.dumps(stats) if stats is not None else current_stats,
+                        _now(),
+                        job_id,
+                    ),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE jobs
+                    SET progress_current = ?,
+                        progress_total   = ?,
+                        progress_message = ?,
+                        updated_at       = ?
+                    WHERE job_id = ?
+                    """,
+                    (current, total, message, _now(), job_id),
+                )
             conn.commit()
         finally:
             conn.close()
@@ -186,6 +237,44 @@ def set_status(job_id: str, status: str, message: str = "") -> None:
                     """,
                     (status, _now(), job_id),
                 )
+            conn.commit()
+        finally:
+            conn.close()
+    _with_write_retry(_do)
+
+
+def set_stage(job_id: str, stage: str) -> None:
+    """Update the pipeline stage + updated_at."""
+    def _do():
+        conn = _connect()
+        try:
+            conn.execute(
+                """
+                UPDATE jobs
+                SET stage = ?, updated_at = ?
+                WHERE job_id = ?
+                """,
+                (stage, _now(), job_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    _with_write_retry(_do)
+
+
+def set_stats(job_id: str, stats: dict[str, int]) -> None:
+    """Persist scan/index summary counters for a job."""
+    def _do():
+        conn = _connect()
+        try:
+            conn.execute(
+                """
+                UPDATE jobs
+                SET stats_json = ?, updated_at = ?
+                WHERE job_id = ?
+                """,
+                (json.dumps(stats), _now(), job_id),
+            )
             conn.commit()
         finally:
             conn.close()

@@ -31,6 +31,7 @@ from services.job_db import (
     update_progress,
     upsert_indexed_file,
 )
+from services.scan_progress import ScanProgressTracker
 
 logger = logging.getLogger("wisp.tasks.scan")
 
@@ -38,7 +39,11 @@ logger = logging.getLogger("wisp.tasks.scan")
 # ── Real scan task ────────────────────────────────────────────────────
 
 
-async def _run_pipeline(job_id: str, all_files: list[Path]) -> int:
+async def _run_pipeline(
+    job_id: str,
+    all_files: list[Path],
+    tracker: ScanProgressTracker,
+) -> int:
     """Async inner loop: init store → ingest each file → teardown.
 
     Returns the count of successfully indexed files.
@@ -55,8 +60,8 @@ async def _run_pipeline(job_id: str, all_files: list[Path]) -> int:
     indexed = 0
     BATCH_SIZE = 4
 
-    async def _process_one(file_path: Path) -> bool:
-        """Ingest a single file. Returns True on success."""
+    async def _process_one(file_path: Path) -> tuple[Path, object | None, str | None]:
+        """Ingest a single file. Returns (path, result, error_message)."""
         filename = file_path.name
         ext = file_path.suffix.lower()
 
@@ -64,7 +69,7 @@ async def _run_pipeline(job_id: str, all_files: list[Path]) -> int:
             result = await pipeline.ingest_file(file_path)
         except Exception as exc:
             logger.warning("ingest_file failed for %s: %s", file_path, exc)
-            return False
+            return file_path, None, str(exc)
 
         is_del = False
         try:
@@ -95,8 +100,9 @@ async def _run_pipeline(job_id: str, all_files: list[Path]) -> int:
             )
         except Exception as exc:
             logger.warning("upsert_indexed_file failed for %s: %s", file_path, exc)
+            return file_path, None, str(exc)
 
-        return True
+        return file_path, result, None
 
     pipeline.init_store()
     try:
@@ -109,12 +115,20 @@ async def _run_pipeline(job_id: str, all_files: list[Path]) -> int:
                 *[_process_one(fp) for fp in batch],
                 return_exceptions=True,
             )
-            for ok in results:
-                if ok is True:
+            for outcome in results:
+                if isinstance(outcome, Exception):
+                    tracker.record_failure(batch[0], str(outcome))
+                    continue
+                file_path, result, error_message = outcome
+                if result is not None:
                     indexed += 1
-
-            done = min(batch_start + len(batch), total)
-            update_progress(job_id, done, total, f"Indexed {done}/{total} files")
+                    tracker.record_result(
+                        file_path,
+                        depth=result.depth,
+                        skipped=result.skipped,
+                    )
+                else:
+                    tracker.record_failure(file_path, error_message or "unknown failure")
     finally:
         pipeline.teardown_store()
 
@@ -143,17 +157,33 @@ def scan_and_index(job_id: str, folder_paths: list[str]) -> None:
 
         total = len(all_files)
         if total == 0:
+            update_progress(
+                job_id,
+                0,
+                0,
+                "No files found during discovery",
+                stage="DISCOVERED",
+                stats={
+                    "discovered": 0,
+                    "previewed": 0,
+                    "embedded": 0,
+                    "scored": 0,
+                    "cached": 0,
+                    "failed": 0,
+                },
+            )
             reconcile_indexed_files(job_id, scanned_roots)
             set_status(job_id, "success", "No files found in the selected folders")
             return
 
-        update_progress(job_id, 0, total, f"Found {total} files \u2014 starting\u2026")
+        tracker = ScanProgressTracker(job_id, update_progress)
+        tracker.begin(total + len(scan_issues))
 
         # Run the async pipeline in a dedicated thread so it always gets a
         # clean event loop — even when Celery eager mode executes inside
         # FastAPI's existing async context (tests).
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            indexed = pool.submit(asyncio.run, _run_pipeline(job_id, all_files)).result()
+            indexed = pool.submit(asyncio.run, _run_pipeline(job_id, all_files, tracker)).result()
 
         for issue in scan_issues:
             upsert_indexed_file(
@@ -172,7 +202,7 @@ def scan_and_index(job_id: str, folder_paths: list[str]) -> None:
                 error_code=issue.error_code,
                 error_message=issue.error_message,
             )
-
+            tracker.record_issue(issue.path, issue.error_message)
         reconcile_indexed_files(job_id, scanned_roots)
         set_status(
             job_id, "success",
