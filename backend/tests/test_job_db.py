@@ -52,6 +52,25 @@ def test_get_unknown_returns_none():
     assert result is None
 
 
+def test_get_job_tolerates_malformed_stats_json():
+    job_db.create_job("badstats", "scan")
+
+    conn = job_db._connect()
+    try:
+        conn.execute(
+            "UPDATE jobs SET stats_json = ? WHERE job_id = ?",
+            ("{not-json", "badstats"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    job = job_db.get_job("badstats")
+
+    assert job is not None
+    assert job["stats"] == {}
+
+
 # ── update_progress ─────────────────────────────────────────────────────
 
 

@@ -26,6 +26,7 @@ if _backend_dir not in sys.path:
 
 from celery_app import app
 from services.job_db import (
+    get_job,
     reconcile_indexed_files,
     set_status,
     update_progress,
@@ -162,7 +163,7 @@ def scan_and_index(job_id: str, folder_paths: list[str]) -> None:
                 0,
                 0,
                 "No files found during discovery",
-                stage="DISCOVERED",
+                stage="SCORED",
                 stats={
                     "discovered": 0,
                     "previewed": 0,
@@ -209,7 +210,24 @@ def scan_and_index(job_id: str, folder_paths: list[str]) -> None:
             f"Scan complete \u2014 {indexed}/{total} files indexed",
         )
     except Exception:
-        set_status(job_id, "failed", traceback.format_exc(limit=3))
+        failure_message = traceback.format_exc(limit=3)
+        job = get_job(job_id) or {}
+        stats = dict(job.get("stats", {}))
+        stats.setdefault("discovered", 0)
+        stats.setdefault("previewed", 0)
+        stats.setdefault("embedded", 0)
+        stats.setdefault("scored", 0)
+        stats.setdefault("cached", 0)
+        stats["failed"] = int(stats.get("failed", 0)) + 1
+        update_progress(
+            job_id,
+            int(job.get("progress_current", 0)),
+            int(job.get("progress_total", 0)),
+            failure_message,
+            stage=job.get("stage", "DISCOVERED") or "DISCOVERED",
+            stats=stats,
+        )
+        set_status(job_id, "failed", failure_message)
 
 
 # ── Dummy task (kept for smoke tests) ─────────────────────────────────

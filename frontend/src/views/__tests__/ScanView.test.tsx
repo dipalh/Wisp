@@ -217,6 +217,15 @@ describe('ScanView enhanced progress & debug panel', () => {
         window.wispApi.startScanJob = vi.fn().mockResolvedValue({ job_id: 'j-pct' });
         window.wispApi.pollJob = vi.fn().mockResolvedValue({
             job_id: 'j-pct', type: 'scan', status: 'running',
+            stage: 'EMBEDDED',
+            stats: {
+                discovered: 20,
+                previewed: 10,
+                embedded: 5,
+                scored: 2,
+                cached: 1,
+                failed: 0,
+            },
             progress_current: 5, progress_total: 20,
             progress_message: 'Indexing…', updated_at: '',
         });
@@ -227,6 +236,37 @@ describe('ScanView enhanced progress & debug panel', () => {
         await act(async () => { vi.advanceTimersByTime(1100); });
 
         expect(screen.getByText('25%')).toBeInTheDocument();
+    });
+
+    it('shows stage and stats in the debug panel from poll payloads', async () => {
+        window.wispApi.startScanJob = vi.fn().mockResolvedValue({ job_id: 'j-stage' });
+        window.wispApi.pollJob = vi.fn().mockResolvedValue({
+            job_id: 'j-stage', type: 'scan', status: 'running',
+            stage: 'EMBEDDED',
+            stats: {
+                discovered: 12,
+                previewed: 8,
+                embedded: 4,
+                scored: 3,
+                cached: 2,
+                failed: 1,
+            },
+            progress_current: 4, progress_total: 12,
+            progress_message: 'Embedding files', updated_at: '',
+        });
+
+        renderScanView();
+
+        await act(async () => { fireEvent.click(getScanButton()); });
+        await act(async () => { vi.advanceTimersByTime(1100); });
+        await act(async () => { fireEvent.click(screen.getByText(/debug/i)); });
+
+        expect(screen.getByText('Stage')).toBeInTheDocument();
+        expect(screen.getByText('EMBEDDED')).toBeInTheDocument();
+        expect(screen.getByText('Discovered')).toBeInTheDocument();
+        expect(screen.getByText('12')).toBeInTheDocument();
+        expect(screen.getByText('Failed')).toBeInTheDocument();
+        expect(screen.getByText('1')).toBeInTheDocument();
     });
 
     it('accumulates debug log messages from polls', async () => {
@@ -441,6 +481,43 @@ describe('ScanView Open in Finder + job-filtered files', () => {
 
         // Should show "3" for Indexed stat
         expect(screen.getByText('3')).toBeInTheDocument();
+    });
+
+    it('shows a stable state badge for files missing externally', async () => {
+        window.wispApi.startScanJob = vi.fn().mockResolvedValue({ job_id: 'j-missing' });
+        window.wispApi.pollJob = vi.fn().mockResolvedValue({
+            job_id: 'j-missing', type: 'scan', status: 'success',
+            progress_current: 1, progress_total: 1,
+            progress_message: 'Done', updated_at: '',
+        });
+        window.wispApi.getIndexedFiles = vi.fn().mockResolvedValue({
+            files: [{
+                file_id: 'f-missing',
+                job_id: 'j-missing',
+                file_path: '/Users/test/missing.txt',
+                name: 'missing.txt',
+                ext: '.txt',
+                depth: 'deep',
+                chunk_count: 1,
+                engine: 'local',
+                is_deletable: 0,
+                tagged_os: 0,
+                updated_at: '',
+                file_state: 'MISSING_EXTERNALLY',
+                error_code: '',
+                error_message: '',
+            }],
+            total: 1,
+        });
+
+        renderScanView();
+
+        await act(async () => { fireEvent.click(getScanButton()); });
+        await act(async () => { vi.advanceTimersByTime(1100); });
+        await act(async () => { vi.advanceTimersByTime(0); });
+
+        expect(screen.getByText('Missing externally')).toBeInTheDocument();
+        expect(screen.getByText(/rescan to refresh/i)).toBeInTheDocument();
     });
 });
 

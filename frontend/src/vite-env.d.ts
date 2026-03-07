@@ -36,6 +36,9 @@ interface IndexedFile {
   engine: string;
   is_deletable: number;
   tagged_os: number;
+  file_state?: string;
+  error_code?: string;
+  error_message?: string;
   updated_at: string;
 }
 
@@ -118,6 +121,15 @@ interface WispApi {
     job_id: string;
     type: string;
     status: 'queued' | 'running' | 'success' | 'failed';
+    stage: string;
+    stats: {
+      discovered: number;
+      previewed: number;
+      embedded: number;
+      scored: number;
+      cached: number;
+      failed: number;
+    };
     progress_current: number;
     progress_total: number;
     progress_message: string;

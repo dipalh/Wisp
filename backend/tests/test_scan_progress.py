@@ -85,6 +85,28 @@ def test_poll_job_exposes_stats(client, _celery_eager, tmp_path):
     assert body["stats"]["failed"] == 0
 
 
+def test_empty_scan_reports_terminal_stage_with_zero_stats(client, _celery_eager, tmp_path):
+    root = tmp_path / "empty"
+    root.mkdir()
+
+    job_id = _scan(client, root)
+
+    resp = client.get(f"/api/v1/jobs/{job_id}")
+    assert resp.status_code == 200
+    body = resp.json()
+
+    assert body["status"] == "success"
+    assert body["stage"] == "SCORED"
+    assert body["stats"] == {
+        "discovered": 0,
+        "previewed": 0,
+        "embedded": 0,
+        "scored": 0,
+        "cached": 0,
+        "failed": 0,
+    }
+
+
 def test_rescan_unchanged_folder_reports_cached_files(client, _celery_eager, tmp_path):
     root = tmp_path / "scan"
     root.mkdir()
@@ -99,6 +121,9 @@ def test_rescan_unchanged_folder_reports_cached_files(client, _celery_eager, tmp
 
     assert first_job["stats"]["cached"] == 0
     assert second_job["stats"]["cached"] == 1
+    assert second_job["stats"]["previewed"] == 0
+    assert second_job["stats"]["embedded"] == 0
+    assert second_job["stats"]["scored"] == 1
     assert second_rows[0]["engine"] == "cached"
 
 
@@ -185,3 +210,22 @@ def test_rerun_after_partial_failure_does_not_duplicate_prior_good_state(
     assert second_job["stats"]["failed"] == 0
     assert {row["name"] for row in second_rows} == {"a.txt", "b.txt"}
     assert store.collection_count() == sum(row["chunk_count"] for row in second_rows)
+
+
+def test_fatal_scan_failure_persists_failed_status_and_stats(client, _celery_eager, tmp_path):
+    root = tmp_path / "scan"
+    root.mkdir()
+    (root / "a.txt").write_text("alpha")
+
+    from tasks import scan as scan_task
+
+    with patch.object(scan_task, "_run_pipeline", side_effect=RuntimeError("fatal pipeline failure")):
+        job_id = _scan(client, root)
+
+    job = job_db.get_job(job_id)
+
+    assert job["status"] == "failed"
+    assert job["stage"] == "DISCOVERED"
+    assert job["stats"]["discovered"] == 1
+    assert job["stats"]["failed"] == 1
+    assert "fatal pipeline failure" in job["progress_message"]

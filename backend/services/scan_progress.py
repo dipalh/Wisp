@@ -49,13 +49,23 @@ class ScanProgressTracker:
         self._emit(0, total, f"Discovered {total} files", ScanStage.DISCOVERED)
 
     def record_result(self, file_path: Path, *, depth: str, skipped: bool) -> None:
+        if skipped:
+            self.stats.cached += 1
+            self.stats.scored += 1
+            self.completed += 1
+            self._emit(
+                self.completed,
+                self.total,
+                f"Scored {self.completed}/{self.total}: {file_path.name}",
+                ScanStage.SCORED,
+            )
+            return
+
         self.stats.previewed += 1
         self._emit(self.completed, self.total, f"Previewed {file_path.name}", ScanStage.PREVIEWED)
         if depth == "deep":
             self.stats.embedded += 1
             self._emit(self.completed, self.total, f"Embedded {file_path.name}", ScanStage.EMBEDDED)
-        if skipped:
-            self.stats.cached += 1
         self.stats.scored += 1
         self.completed += 1
         self._emit(self.completed, self.total, f"Scored {self.completed}/{self.total}: {file_path.name}", ScanStage.SCORED)

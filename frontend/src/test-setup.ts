@@ -36,6 +36,15 @@ window.wispApi = {
     startScanJob: () => Promise.resolve({ job_id: 'stub' }),
     pollJob: () => Promise.resolve({
         job_id: 'stub', type: 'scan', status: 'queued' as const,
+        stage: 'QUEUED',
+        stats: {
+            discovered: 0,
+            previewed: 0,
+            embedded: 0,
+            scored: 0,
+            cached: 0,
+            failed: 0,
+        },
         progress_current: 0, progress_total: 0, progress_message: '',
         updated_at: '',
     }),

@@ -18,6 +18,15 @@ import type { TaggedFile } from '../components/AppShell';
 type JobState = {
     job_id: string;
     status: 'queued' | 'running' | 'success' | 'failed';
+    stage?: string;
+    stats?: {
+        discovered: number;
+        previewed: number;
+        embedded: number;
+        scored: number;
+        cached: number;
+        failed: number;
+    };
     progress_current: number;
     progress_total: number;
     progress_message: string;
@@ -34,6 +43,9 @@ type IndexedFile = {
     engine: string;
     is_deletable: number;
     tagged_os: number;
+    file_state?: string;
+    error_code?: string;
+    error_message?: string;
     updated_at: string;
 };
 
@@ -60,6 +72,23 @@ const DEPTH_COLORS: Record<string, string> = {
     deep: 'var(--accent)',
     preview: '#d69e2e',
     card: 'var(--text-faint)',
+};
+
+const FILE_STATE_LABELS: Record<string, string> = {
+    INDEXED: 'Indexed',
+    STALE: 'Stale',
+    MISSING_EXTERNALLY: 'Missing externally',
+    MOVED_EXTERNALLY: 'Moved externally',
+    PERMISSION_DENIED: 'Permission denied',
+    QUARANTINED: 'Quarantined',
+};
+
+const FILE_STATE_HINTS: Record<string, string> = {
+    STALE: 'Rescan to refresh this file state.',
+    MISSING_EXTERNALLY: 'Rescan to refresh this file state.',
+    MOVED_EXTERNALLY: 'Rescan to refresh this file state.',
+    PERMISSION_DENIED: 'Grant access or rescan this folder.',
+    QUARANTINED: 'This file was moved out of the active index.',
 };
 
 const MAX_POLL_FAILURES = 3;
@@ -159,6 +188,15 @@ export default function ScanView({
             setJob({
                 job_id,
                 status: 'queued',
+                stage: 'QUEUED',
+                stats: {
+                    discovered: 0,
+                    previewed: 0,
+                    embedded: 0,
+                    scored: 0,
+                    cached: 0,
+                    failed: 0,
+                },
                 progress_current: 0,
                 progress_total: 0,
                 progress_message: 'Starting\u2026',
@@ -172,6 +210,8 @@ export default function ScanView({
                     setJob({
                         job_id: data.job_id,
                         status: data.status,
+                        stage: data.stage,
+                        stats: data.stats,
                         progress_current: data.progress_current,
                         progress_total: data.progress_total,
                         progress_message: data.progress_message,
@@ -353,9 +393,41 @@ export default function ScanView({
                                     <span className="debug-value">{job.status}</span>
                                 </div>
                                 <div className="debug-row">
+                                    <span className="debug-label">Stage</span>
+                                    <span className="debug-value">{job.stage || '-'}</span>
+                                </div>
+                                <div className="debug-row">
                                     <span className="debug-label">Progress</span>
                                     <span className="debug-value">{job.progress_current}/{job.progress_total}</span>
                                 </div>
+                                {job.stats && (
+                                    <>
+                                        <div className="debug-row">
+                                            <span className="debug-label">Discovered</span>
+                                            <span className="debug-value">{job.stats.discovered}</span>
+                                        </div>
+                                        <div className="debug-row">
+                                            <span className="debug-label">Previewed</span>
+                                            <span className="debug-value">{job.stats.previewed}</span>
+                                        </div>
+                                        <div className="debug-row">
+                                            <span className="debug-label">Embedded</span>
+                                            <span className="debug-value">{job.stats.embedded}</span>
+                                        </div>
+                                        <div className="debug-row">
+                                            <span className="debug-label">Scored</span>
+                                            <span className="debug-value">{job.stats.scored}</span>
+                                        </div>
+                                        <div className="debug-row">
+                                            <span className="debug-label">Cached</span>
+                                            <span className="debug-value">{job.stats.cached}</span>
+                                        </div>
+                                        <div className="debug-row">
+                                            <span className="debug-label">Failed</span>
+                                            <span className="debug-value">{job.stats.failed}</span>
+                                        </div>
+                                    </>
+                                )}
                                 <div className="debug-row">
                                     <span className="debug-label">Last poll</span>
                                     <span className="debug-value">{lastPollTime || '-'}</span>
@@ -445,10 +517,27 @@ export default function ScanView({
                                             Deletable
                                         </span>
                                     )}
+                                    {file.file_state && file.file_state !== 'INDEXED' && (
+                                        <span
+                                            className="tag"
+                                            style={{
+                                                fontSize: 10,
+                                                color: '#c05621',
+                                                borderColor: '#c05621',
+                                            }}
+                                        >
+                                            {FILE_STATE_LABELS[file.file_state] || file.file_state}
+                                        </span>
+                                    )}
                                 </div>
                                 <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1, paddingLeft: 19 }}>
                                     {file.file_path}
                                 </div>
+                                {file.file_state && FILE_STATE_HINTS[file.file_state] && (
+                                    <div style={{ fontSize: 11, color: '#c05621', marginTop: 4, paddingLeft: 19 }}>
+                                        {FILE_STATE_HINTS[file.file_state]}
+                                    </div>
+                                )}
                             </div>
                             <button
                                 className="file-item-open"

@@ -147,7 +147,11 @@ def get_job(job_id: str) -> dict | None:
         if row is None:
             return None
         data = dict(row)
-        data["stats"] = json.loads(data.pop("stats_json", "{}") or "{}")
+        raw_stats = data.pop("stats_json", "{}") or "{}"
+        try:
+            data["stats"] = json.loads(raw_stats)
+        except json.JSONDecodeError:
+            data["stats"] = {}
         return data
     finally:
         conn.close()
