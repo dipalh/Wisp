@@ -60,11 +60,13 @@ def client():
 
 
 def test_post_scan_returns_job_id(client):
-    resp = client.post("/api/v1/jobs/scan", json={"folders": ["/tmp"]})
+    with patch("api.v1.jobs.scan_and_index.delay") as mock_delay:
+        resp = client.post("/api/v1/jobs/scan", json={"folders": ["/tmp"]})
     assert resp.status_code == 200
     data = resp.json()
     assert "job_id" in data
     assert len(data["job_id"]) == 32
+    mock_delay.assert_called_once_with(data["job_id"], ["/tmp"])
 
 
 def test_post_scan_requires_folders(client):
@@ -81,8 +83,10 @@ def test_post_scan_rejects_missing_body(client):
 
 
 def test_get_job_returns_queued(client):
-    post_resp = client.post("/api/v1/jobs/scan", json={"folders": ["/tmp"]})
+    with patch("api.v1.jobs.scan_and_index.delay") as mock_delay:
+        post_resp = client.post("/api/v1/jobs/scan", json={"folders": ["/tmp"]})
     job_id = post_resp.json()["job_id"]
+    mock_delay.assert_called_once_with(job_id, ["/tmp"])
 
     job = job_db.get_job(job_id)
     assert job is not None

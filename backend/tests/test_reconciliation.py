@@ -196,3 +196,51 @@ def test_locked_directory_during_scan_is_recorded_as_locked_state(
     assert locked_row["file_state"] == "LOCKED"
     assert locked_row["error_code"] == "LOCKED"
     assert "locked" in locked_row["error_message"].lower()
+
+
+def test_rescan_marks_stale_file_with_error_code_when_file_not_reindexed(
+    client,
+    _celery_eager,
+    tmp_path,
+):
+    scan_dir = tmp_path / "scan_target"
+    scan_dir.mkdir()
+    target = scan_dir / "hello.txt"
+    target.write_text("hello world")
+
+    first_job_id = _run_scan(client, scan_dir)
+
+    async def _failing_ingest(file_path: Path, file_id=None, force_deep=False):
+        raise RuntimeError("simulated ingest failure")
+
+    with patch("services.embedding.pipeline.ingest_file", side_effect=_failing_ingest), \
+         patch("services.embedding.pipeline.init_store"), \
+         patch("services.embedding.pipeline.teardown_store"):
+        second_job_id = client.post("/api/v1/jobs/scan", json={"folders": [str(scan_dir)]}).json()["job_id"]
+
+    rows = job_db.get_indexed_files()
+    stale_row = next(row for row in rows if row["job_id"] == first_job_id)
+
+    assert second_job_id != first_job_id
+    assert stale_row["file_state"] == "STALE"
+    assert stale_row["error_code"] == "STALE"
+    assert "not indexed" in stale_row["error_message"].lower()
+
+
+def test_scan_marks_file_under_quarantine_directory_as_quarantined(
+    client,
+    _celery_eager,
+    tmp_path,
+):
+    scan_dir = tmp_path / "scan_target"
+    quarantine_dir = scan_dir / ".wisp_quarantine"
+    quarantine_dir.mkdir(parents=True)
+    quarantined_file = quarantine_dir / "old.tmp"
+    quarantined_file.write_text("old installer")
+
+    job_id = _run_scan(client, scan_dir)
+    rows = job_db.get_indexed_files(job_id=job_id)
+    row = next(r for r in rows if r["file_path"].endswith("old.tmp"))
+
+    assert row["file_state"] == "QUARANTINED"
+    assert row["error_code"] == "QUARANTINED"

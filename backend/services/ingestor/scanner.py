@@ -75,7 +75,7 @@ def _scan_issue_for_exception(path: Path, exc: BaseException) -> ScanIssue | Non
 def _skip_dir(name: str) -> bool:
     low = name.lower()
     return (
-        (low.startswith(".") and low not in {".app"})
+        (low.startswith(".") and low not in {".app", ".wisp_quarantine"})
         or low in _SKIP_DIRS
         or low.endswith("_files")
         or low.endswith(".lproj")

@@ -35,6 +35,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from services.embedding import pipeline
+from services.file_state import normalize_error_code, normalize_error_message
 from services.job_db import get_indexed_state_map
 from services.proposer import propose_from_hits
 
@@ -100,8 +101,14 @@ async def ask_assistant(body: AssistantRequest):
                     "file_id": hit.file_id,
                     "file_path": hit.file_path,
                     "file_state": state.get("file_state", "INDEXED"),
-                    "error_code": state.get("error_code", ""),
-                    "error_message": state.get("error_message", ""),
+                    "error_code": normalize_error_code(
+                        state.get("file_state", "INDEXED"),
+                        state.get("error_code", ""),
+                    ),
+                    "error_message": normalize_error_message(
+                        state.get("file_state", "INDEXED"),
+                        state.get("error_message", ""),
+                    ),
                 }
             )
 

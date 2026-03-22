@@ -436,6 +436,13 @@ def _is_under_any_root(file_path: str, roots: list[str]) -> bool:
     return any(resolved.is_relative_to(Path(root).resolve()) for root in roots)
 
 
+def _is_quarantine_path(file_path: str) -> bool:
+    try:
+        return ".wisp_quarantine" in Path(file_path).parts
+    except Exception:
+        return False
+
+
 def reconcile_indexed_files(job_id: str, root_paths: list[str]) -> None:
     """Reclassify previously indexed rows after a scan completes."""
 
@@ -445,7 +452,8 @@ def reconcile_indexed_files(job_id: str, root_paths: list[str]) -> None:
             rows = [
                 dict(row)
                 for row in conn.execute(
-                    "SELECT file_id, file_path, fingerprint, last_seen_job_id, file_state "
+                    "SELECT file_id, file_path, fingerprint, last_seen_job_id, file_state, "
+                    "error_code, error_message "
                     "FROM indexed_files"
                 ).fetchall()
             ]
@@ -459,32 +467,46 @@ def reconcile_indexed_files(job_id: str, root_paths: list[str]) -> None:
             }
 
             for row in scoped_rows:
-                if row["last_seen_job_id"] == job_id:
+                if _is_quarantine_path(row["file_path"]) and Path(row["file_path"]).exists():
+                    state = FileState.QUARANTINED.value
+                    error_code = state
+                    error_message = "File is located in Wisp quarantine."
+                elif row["last_seen_job_id"] == job_id:
                     if row["file_state"] in {
                         FileState.PERMISSION_DENIED.value,
                         FileState.LOCKED.value,
                     }:
                         state = row["file_state"]
+                        error_code = row["error_code"] or state
+                        error_message = row["error_message"] or state.replace("_", " ").title()
                     else:
                         state = FileState.INDEXED.value
+                        error_code = ""
+                        error_message = ""
                 elif (
                     row["fingerprint"]
                     and row["fingerprint"] in current_by_fingerprint
                     and current_by_fingerprint[row["fingerprint"]]["file_path"] != row["file_path"]
                 ):
                     state = FileState.MOVED_EXTERNALLY.value
+                    error_code = state
+                    error_message = "File path changed outside Wisp and needs reconciliation."
                 elif not Path(row["file_path"]).exists():
                     state = FileState.MISSING_EXTERNALLY.value
+                    error_code = state
+                    error_message = "File is missing on disk at the previously indexed path."
                 else:
                     state = FileState.STALE.value
+                    error_code = state
+                    error_message = "File exists on disk but was not indexed in the most recent scan."
 
                 conn.execute(
                     """
                     UPDATE indexed_files
-                    SET file_state = ?, updated_at = ?
+                    SET file_state = ?, error_code = ?, error_message = ?, updated_at = ?
                     WHERE file_id = ?
                     """,
-                    (state, _now(), row["file_id"]),
+                    (state, error_code, error_message, _now(), row["file_id"]),
                 )
             conn.commit()
         finally:

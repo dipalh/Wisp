@@ -177,13 +177,30 @@ def test_finder_visibility() -> None:
     print("PART 3 — Finder visibility (macOS spot-check)")
     print("=" * 60)
 
-    with tempfile.NamedTemporaryFile(
-        suffix=".txt", delete=False,
-        dir=str(Path.home() / "Desktop"),
-        prefix="wisp_deletable_test_",
-    ) as f:
-        f.write(b"This file should have a RED 'Deletable' tag in Finder.")
-        path = f.name
+    path: str | None = None
+    candidate_dirs = [str(Path.home() / "Desktop"), tempfile.gettempdir()]
+    last_error: Exception | None = None
+
+    for candidate_dir in candidate_dirs:
+        try:
+            os.makedirs(candidate_dir, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                suffix=".txt",
+                delete=False,
+                dir=candidate_dir,
+                prefix="wisp_deletable_test_",
+            ) as f:
+                f.write(b"This file should have a RED 'Deletable' tag in Finder.")
+                path = f.name
+            break
+        except (PermissionError, FileNotFoundError, OSError) as exc:
+            last_error = exc
+            continue
+
+    if path is None:
+        raise RuntimeError(
+            f"Could not create Finder visibility test file in {candidate_dirs}"
+        ) from last_error
 
     set_deletable(path, True)
     tagged = is_deletable(path)
@@ -198,6 +215,32 @@ def test_finder_visibility() -> None:
     set_deletable(path, False)
     os.unlink(path)
     print("  (cleaned up test file)")
+
+
+def test_finder_visibility_handles_desktop_permission_error(monkeypatch, tmp_path) -> None:
+    import platform
+    if platform.system() != "Darwin":
+        return
+
+    desktop_dir = str(tmp_path / "Desktop")
+    original_named_temporary_file = tempfile.NamedTemporaryFile
+    creation_dirs: list[str] = []
+
+    def _fake_named_temporary_file(*args, **kwargs):
+        target_dir = kwargs.get("dir")
+        creation_dirs.append(target_dir)
+        if target_dir == desktop_dir:
+            raise PermissionError("Operation not permitted")
+        return original_named_temporary_file(*args, **kwargs)
+
+    monkeypatch.setattr(tempfile, "NamedTemporaryFile", _fake_named_temporary_file)
+    monkeypatch.setattr(sys.modules[__name__], "set_deletable", lambda *a, **k: True)
+    monkeypatch.setattr(sys.modules[__name__], "is_deletable", lambda *a, **k: True)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    test_finder_visibility()
+    assert creation_dirs[0] == desktop_dir
+    assert len(creation_dirs) >= 2
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────

@@ -31,6 +31,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from services.embedding import pipeline
+from services.file_state import normalize_error_code, normalize_error_message
 from services.job_db import get_indexed_state_map
 from services.roots import is_under_root
 
@@ -79,8 +80,14 @@ def semantic_search(body: SearchRequest):
             "snippet":   h.text[:300],
             "depth":     h.depth,
             "file_state": state_map.get(h.file_id, {}).get("file_state", "INDEXED"),
-            "error_code": state_map.get(h.file_id, {}).get("error_code", ""),
-            "error_message": state_map.get(h.file_id, {}).get("error_message", ""),
+            "error_code": normalize_error_code(
+                state_map.get(h.file_id, {}).get("file_state", "INDEXED"),
+                state_map.get(h.file_id, {}).get("error_code", ""),
+            ),
+            "error_message": normalize_error_message(
+                state_map.get(h.file_id, {}).get("file_state", "INDEXED"),
+                state_map.get(h.file_id, {}).get("error_message", ""),
+            ),
         }
         for h in hits
     ]

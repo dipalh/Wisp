@@ -284,6 +284,43 @@ def test_search_results_include_index_state_fields(client):
     assert "no longer exists" in result["error_message"]
 
 
+@pytest.mark.parametrize("file_state", ["MOVED_EXTERNALLY", "PERMISSION_DENIED", "LOCKED"])
+def test_search_results_normalize_error_code_from_file_state(client, file_state):
+    fake_hits = [
+        _FakeSearchHit(
+            chunk_id=f"{file_state.lower()}:0",
+            file_id=file_state.lower(),
+            chunk_index=0,
+            file_path=f"/Users/test/Documents/{file_state.lower()}.txt",
+            ext=".txt",
+            text="stateful note",
+            score=0.8,
+            depth="deep",
+        ),
+    ]
+
+    with patch("api.v1.search.pipeline") as mock_pipeline, \
+         patch("api.v1.search.is_under_root", return_value=True), \
+         patch(
+             "api.v1.search.get_indexed_state_map",
+             return_value={
+                 file_state.lower(): {
+                     "file_state": file_state,
+                     "error_code": "",
+                     "error_message": "",
+                 }
+             },
+             create=True,
+         ):
+        mock_pipeline.search.return_value = fake_hits
+        resp = client.post("/api/v1/search", json={"query": "stateful note"})
+
+    assert resp.status_code == 200
+    result = resp.json()["results"][0]
+    assert result["file_state"] == file_state
+    assert result["error_code"] == file_state
+
+
 # ═══════════════════════════════════════════════════════════════════════
 #  Store lifecycle — startup & shutdown
 # ═══════════════════════════════════════════════════════════════════════
