@@ -154,6 +154,8 @@ TEXT_LIKE_EXTENSIONS = {
 
 
 def _category_for_ext(ext: str) -> str:
+    if ext == ".pdf":
+        return "pdf"
     if ext == ".txt":
         return "text"
     if ext in OFFICE_MIME_TYPES:
@@ -171,7 +173,16 @@ def _category_for_ext(ext: str) -> str:
     return "document"
 
 
-def _build_result(filename: str, mime_type: str, content: str, engine_used: str, ext: str, fallback_used: bool = False, errors: list[str] | None = None) -> ContentResult:
+def _build_result(
+    filename: str,
+    mime_type: str,
+    content: str,
+    engine_used: str,
+    ext: str,
+    fallback_used: bool = False,
+    errors: list[str] | None = None,
+    metadata: dict | None = None,
+) -> ContentResult:
     return ContentResult(
         filename=filename,
         file_name=filename,
@@ -182,6 +193,7 @@ def _build_result(filename: str, mime_type: str, content: str, engine_used: str,
         engine_used=engine_used,
         fallback_used=fallback_used,
         errors=errors or [],
+        metadata=metadata or {},
     )
 
 
@@ -192,6 +204,17 @@ def _fake_gemini_content(file_bytes: bytes, ext: str, filename: str) -> str:
         if preview:
             return f"DEMO_EXTRACT:{normalized_ext}:{preview[:80]}"
     return f"DEMO_EXTRACT:{normalized_ext}:{filename}"
+
+
+def _gemini_metadata(file_bytes: bytes, ext: str, *, mode: str | None = None) -> dict:
+    metadata = {
+        "size_bytes": len(file_bytes),
+        "ext": ext,
+        "family": "pdf" if ext == ".pdf" else _category_for_ext(ext),
+    }
+    if mode:
+        metadata["mode"] = mode
+    return metadata
 
 
 def _extract_txt(file_bytes: bytes) -> str:
@@ -207,7 +230,14 @@ async def extract(file_bytes: bytes, filename: str) -> ContentResult:
         try:
             content = _extract_txt(file_bytes)
             mime = GEMINI_MIME_TYPES.get(ext, "text/plain")
-            return _build_result(filename, mime, content, engine_used="local", ext=ext)
+            return _build_result(
+                filename,
+                mime,
+                content,
+                engine_used="local",
+                ext=ext,
+                metadata={"size_bytes": len(file_bytes), "ext": ext},
+            )
         except Exception:
             return _build_result(
                 filename,
@@ -216,19 +246,41 @@ async def extract(file_bytes: bytes, filename: str) -> ContentResult:
                 engine_used="fake",
                 ext=ext,
                 fallback_used=True,
+                metadata={"size_bytes": len(file_bytes), "ext": ext},
             )
 
     if ext in OFFICE_MIME_TYPES:
         content = office.extract(file_bytes, ext)
-        return _build_result(filename, OFFICE_MIME_TYPES[ext], content, engine_used="local", ext=ext)
+        return _build_result(
+            filename,
+            OFFICE_MIME_TYPES[ext],
+            content,
+            engine_used="local",
+            ext=ext,
+            metadata={"size_bytes": len(file_bytes), "ext": ext},
+        )
 
     if ext in ARCHIVE_MIME_TYPES:
         content = archive.extract(file_bytes, ext)
-        return _build_result(filename, ARCHIVE_MIME_TYPES[ext], content, engine_used="local", ext=ext)
+        return _build_result(
+            filename,
+            ARCHIVE_MIME_TYPES[ext],
+            content,
+            engine_used="local",
+            ext=ext,
+            metadata={"size_bytes": len(file_bytes), "ext": ext, "family": "archive"},
+        )
 
     if ext in EXECUTABLE_MIME_TYPES:
         content = binary.extract(file_bytes, ext)
-        return _build_result(filename, EXECUTABLE_MIME_TYPES[ext], content, engine_used="local", ext=ext)
+        return _build_result(
+            filename,
+            EXECUTABLE_MIME_TYPES[ext],
+            content,
+            engine_used="local",
+            ext=ext,
+            metadata={"size_bytes": len(file_bytes), "ext": ext, "family": "binary"},
+        )
 
     if ext in GEMINI_MIME_TYPES:
         mime_type = GEMINI_MIME_TYPES[ext]
@@ -238,13 +290,26 @@ async def extract(file_bytes: bytes, filename: str) -> ContentResult:
         if len(file_bytes) > FILENAME_INFER_SIZE_BYTES and ext not in TEXT_LIKE_EXTENSIONS:
             from ai.generate import infer_from_filename
             content = await infer_from_filename(filename)
-            return _build_result(filename, mime_type, content,
-                                 engine_used="filename-infer", ext=ext)
+            return _build_result(
+                filename,
+                mime_type,
+                content,
+                engine_used="filename-infer",
+                ext=ext,
+                metadata=_gemini_metadata(file_bytes, ext, mode="filename-infer"),
+            )
 
         try:
             content = await gemini.extract(file_bytes, mime_type, ext, force_files_api=force_files_api)
-            return _build_result(filename, mime_type, content, engine_used="gemini", ext=ext)
-        except Exception:
+            return _build_result(
+                filename,
+                mime_type,
+                content,
+                engine_used="gemini",
+                ext=ext,
+                metadata=_gemini_metadata(file_bytes, ext, mode="gemini"),
+            )
+        except Exception as exc:
             return _build_result(
                 filename,
                 mime_type,
@@ -252,17 +317,48 @@ async def extract(file_bytes: bytes, filename: str) -> ContentResult:
                 engine_used="fake",
                 ext=ext,
                 fallback_used=True,
+                errors=[f"gemini extraction failed: {exc}"],
+                metadata=_gemini_metadata(file_bytes, ext, mode="fallback"),
             )
 
     # ── Unknown / unsupported — try reading as text, else infer from filename ─
     try:
         content = file_bytes.decode("utf-8")
         if content.strip():
-            return _build_result(filename, "text/plain", content, engine_used="local-guess", ext=ext)
+            return _build_result(
+                filename,
+                "text/plain",
+                content,
+                engine_used="local-guess",
+                ext=ext,
+                metadata={"size_bytes": len(file_bytes), "ext": ext},
+            )
     except (UnicodeDecodeError, ValueError):
         pass
 
     from ai.generate import infer_from_filename
-    content = await infer_from_filename(filename)
-    return _build_result(filename, "application/octet-stream", content,
-                         engine_used="filename-infer", ext=ext)
+    try:
+        content = await infer_from_filename(filename)
+        return _build_result(
+            filename,
+            "application/octet-stream",
+            content,
+            engine_used="filename-infer",
+            ext=ext,
+            errors=[f"unsupported extension '{ext}' inferred from filename"],
+            metadata={"size_bytes": len(file_bytes), "ext": ext},
+        )
+    except Exception as exc:
+        return _build_result(
+            filename,
+            "application/octet-stream",
+            _fake_gemini_content(file_bytes, ext, filename),
+            engine_used="fake",
+            ext=ext,
+            fallback_used=True,
+            errors=[
+                f"unsupported extension '{ext}' inferred from filename",
+                f"filename inference failed: {exc}",
+            ],
+            metadata={"size_bytes": len(file_bytes), "ext": ext},
+        )

@@ -957,7 +957,7 @@ async def _ingest_deep(
         from services.file_processor.dispatcher import extract as dispatch_extract
         async with _AI_SEM:
             cr = await dispatch_extract(file_bytes, file_path.name)
-        content = (cr.content or "")[:MAX_EMBED_CHARS]
+        content = (cr.content or cr.text or "")[:MAX_EMBED_CHARS]
         engine = cr.engine_used or "gemini"
     except Exception:
         # Fall back to local extraction

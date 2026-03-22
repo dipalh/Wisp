@@ -11,3 +11,4 @@ class ContentResult(BaseModel):
     engine_used: str = "real"
     fallback_used: bool = False
     errors: list[str] = Field(default_factory=list)
+    metadata: dict = Field(default_factory=dict)
