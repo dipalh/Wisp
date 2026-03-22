@@ -16,6 +16,7 @@ from pathlib import Path
 
 from ai.generate import generate_structured
 from services.embedding import store
+from services.roots import get_roots, is_under_root
 from services.organizer.models import DirectoryProposal, DirectorySuggestions, FileMapping
 
 
@@ -169,13 +170,41 @@ def _mock_suggestions(files: list[dict]) -> DirectorySuggestions:
     )
 
 
-async def suggest_directories(mock_mode: bool = False) -> DirectorySuggestions:
+def _degraded_budget_response() -> DirectorySuggestions:
+    return DirectorySuggestions(
+        proposals=[],
+        recommendation=(
+            "Degraded organizer response: tool budget exhausted before planning. "
+            "Increase budget and retry."
+        ),
+    )
+
+
+def _outside_root_targets(files: list[dict]) -> list[str]:
+    if not get_roots():
+        return []
+    outside: list[str] = []
+    for f in files:
+        file_path = f.get("file_path")
+        if not file_path:
+            continue
+        if not is_under_root(file_path):
+            outside.append(file_path)
+    return sorted(set(outside))
+
+
+async def suggest_directories(
+    mock_mode: bool = False,
+    tool_budget: int | None = None,
+) -> DirectorySuggestions:
     """
     Read all indexed files from LanceDB and ask Gemini to propose directory structures.
 
     Args:
         mock_mode: When True, bypass model generation and return deterministic
             suggestions from file metadata only.
+        tool_budget: Optional planning budget. Values <= 0 return a deterministic
+            degraded response instead of raising.
 
     Returns:
         DirectorySuggestions with proposals and a recommendation.
@@ -193,8 +222,29 @@ async def suggest_directories(mock_mode: bool = False) -> DirectorySuggestions:
             ),
         )
 
+    outside = _outside_root_targets(files)
+    if outside:
+        return DirectorySuggestions(
+            proposals=[],
+            recommendation=(
+                "Rejected organizer planning because one or more targets are outside "
+                "registered roots."
+            ),
+        )
+
+    if tool_budget is not None and tool_budget <= 0:
+        return _degraded_budget_response()
+
     if mock_mode:
         return _mock_suggestions(files)
 
     manifest = _build_manifest(files)
-    return await generate_structured(manifest, DirectorySuggestions, system=_SYSTEM)
+    try:
+        return await generate_structured(manifest, DirectorySuggestions, system=_SYSTEM)
+    except Exception as exc:
+        fallback = _mock_suggestions(files)
+        fallback.recommendation = (
+            "Degraded organizer response: Ollama unavailable; "
+            f"using deterministic mock strategy. ({exc})"
+        )
+        return fallback

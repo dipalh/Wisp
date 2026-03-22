@@ -85,6 +85,8 @@ MAX_IMAGE_SIZE_CAPTION = 20_000_000 # 20 MB — skip vision for huge images
 MAX_PDF_SIZE_FOR_AI    = 10_000_000 # 10 MB — skip Gemini PDF vision for huge PDFs
 CHUNK_SIZE             = 800        # Characters per chunk
 CHUNK_OVERLAP          = 100        # Overlap between chunks
+AUTO_DEEPEN_TOP_HITS   = 5          # Consider top-N retrieval hits for deepening
+AUTO_DEEPEN_MAX_FILES  = 3          # Deepen at most N unique files per ask()
 
 
 # ── Extension sets ────────────────────────────────────────────────────────────
@@ -1109,12 +1111,22 @@ async def ask(
     deepened: list[str] = []
     if auto_deepen:
         shallow_hits = [
-            h for h in hits[:5]
+            h for h in hits[:AUTO_DEEPEN_TOP_HITS]
             if h.depth != "deep"
             and h.file_path
             and Path(h.file_path).suffix.lower() in DEEPEN_EXTENSIONS
         ]
-        for hit in shallow_hits[:3]:
+        selected: list[SearchHit] = []
+        seen_file_ids: set[str] = set()
+        for hit in shallow_hits:
+            if hit.file_id in seen_file_ids:
+                continue
+            seen_file_ids.add(hit.file_id)
+            selected.append(hit)
+            if len(selected) >= AUTO_DEEPEN_MAX_FILES:
+                break
+
+        for hit in selected:
             fpath = Path(hit.file_path)
             if fpath.exists():
                 # deepen_file → ingest_file → _ingest_async already

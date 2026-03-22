@@ -37,6 +37,17 @@ from services.roots import is_under_root
 
 router = APIRouter()
 
+_STATE_PRIORITY: dict[str, int] = {
+    "INDEXED": 0,
+    "MOVED_EXTERNALLY": 1,
+    "PERMISSION_DENIED": 1,
+    "LOCKED": 1,
+    "STALE": 2,
+    "MISSING_EXTERNALLY": 3,
+    "QUARANTINED": 4,
+}
+_DEPTH_PRIORITY: dict[str, int] = {"deep": 0, "preview": 1, "card": 2}
+
 
 class SearchRequest(BaseModel):
     query: str
@@ -70,6 +81,17 @@ def semantic_search(body: SearchRequest):
     # Root scope guard — drop hits whose file is outside all registered roots
     hits = [h for h in hits if is_under_root(h.file_path or "")]
     state_map = get_indexed_state_map([h.file_id for h in hits])
+    hits = sorted(
+        hits,
+        key=lambda h: (
+            _STATE_PRIORITY.get(
+                state_map.get(h.file_id, {}).get("file_state", "INDEXED"),
+                99,
+            ),
+            _DEPTH_PRIORITY.get(h.depth or "card", 99),
+            -float(h.score or 0.0),
+        ),
+    )
 
     results = [
         {

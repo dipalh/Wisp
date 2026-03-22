@@ -6,3 +6,4 @@ dist/
 .env
 Downloads/
 docs/
+backend/wisp_actions.db

@@ -21,11 +21,12 @@ Public API
 from __future__ import annotations
 
 import shutil
+import time
 from pathlib import Path
 
 import services.actions as action_store
 from services.actions.models import Action, ActionStatus, ActionType
-from services.roots import is_under_root
+from services.roots import get_roots, is_under_root
 
 
 class ExecutionError(Exception):
@@ -35,6 +36,28 @@ class ExecutionError(Exception):
         super().__init__(message)
         self.code = code
         self.status_code = status_code
+
+
+def _quarantine_dir_for(src: Path) -> Path:
+    for root_str in get_roots():
+        root = Path(root_str)
+        try:
+            if src.is_relative_to(root):
+                return root / ".wisp_quarantine"
+        except ValueError:
+            continue
+    return src.parent / ".wisp_quarantine"
+
+
+def _next_available_path(path: Path) -> Path:
+    if not path.exists():
+        return path
+    index = 1
+    while True:
+        candidate = path.with_name(f"{path.stem}_{index}{path.suffix}")
+        if not candidate.exists():
+            return candidate
+        index += 1
 
 
 def execute_action(action_id: str) -> Action:
@@ -69,6 +92,13 @@ def execute_action(action_id: str) -> Action:
         raise ExecutionError(
             f"Action {action_id} has been UNDONE and cannot be re-applied",
             code="ACTION_ALREADY_UNDONE",
+        )
+
+    if action.status not in (ActionStatus.PROPOSED, ActionStatus.ACCEPTED):
+        raise ExecutionError(
+            f"Action {action_id} cannot execute from status {action.status.value}",
+            code="ACTION_INVALID_STATUS",
+            status_code=409,
         )
 
     src_path = action.before_state.get("path", "")
@@ -136,9 +166,18 @@ def execute_action(action_id: str) -> Action:
 
     elif action.type == ActionType.DELETE:
         try:
-            src.unlink()
+            quarantine_dir = _quarantine_dir_for(src)
+            quarantine_dir.mkdir(parents=True, exist_ok=True)
+            dst = _next_available_path(quarantine_dir / src.name)
+            shutil.move(str(src), str(dst))
+            action.after_state["path"] = str(dst)
+            action_store.add(action)
         except FileNotFoundError:
-            pass  # already gone — treat as success
+            raise ExecutionError(
+                f"DELETE source missing: {src}",
+                code="DELETE_SOURCE_MISSING",
+                status_code=404,
+            )
         except Exception as exc:
             raise ExecutionError(f"DELETE failed: {exc}", code="DELETE_FAILED") from exc
 
@@ -148,4 +187,4 @@ def execute_action(action_id: str) -> Action:
             code="ACTION_TYPE_NOT_EXECUTABLE",
         )
 
-    return action_store.set_status(action_id, ActionStatus.APPLIED)
+    return action_store.set_status(action_id, ActionStatus.APPLIED, applied_at=time.time())

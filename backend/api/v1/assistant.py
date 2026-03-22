@@ -49,6 +49,27 @@ class AssistantRequest(BaseModel):
     ext:         Optional[str] = Field(default=None)
 
 
+def _attach_proposal_citations(
+    proposals: list[dict],
+    *,
+    default_citations: list[str],
+) -> list[dict]:
+    """Guarantee each proposal carries at least one evidence citation."""
+    normalized: list[dict] = []
+    for proposal in proposals:
+        updated = dict(proposal)
+        citations = [c for c in (updated.get("citations") or []) if c]
+        if not citations:
+            file_path = updated.get("file_path")
+            if file_path:
+                citations = [file_path]
+            elif default_citations:
+                citations = [default_citations[0]]
+        updated["citations"] = citations
+        normalized.append(updated)
+    return normalized
+
+
 @router.post("", summary="Ask the assistant — returns answer + action proposals")
 async def ask_assistant(body: AssistantRequest):
     """Run a RAG query and return an answer with optional cleanup proposals.
@@ -72,6 +93,9 @@ async def ask_assistant(body: AssistantRequest):
 
     where = {"ext": body.ext} if body.ext else None
 
+    degraded = False
+    warnings: list[str] = []
+    confidence = 0.9
     try:
         result = await pipeline.ask(
             body.query,
@@ -80,7 +104,25 @@ async def ask_assistant(body: AssistantRequest):
             auto_deepen=body.auto_deepen,
         )
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Assistant error: {exc}")
+        degraded = True
+        confidence = 0.35
+        warnings.append(
+            "ASSISTANT_DEGRADED: LLM unavailable, returned retrieval-grounded fallback."
+        )
+        hits = pipeline.search(body.query, k=body.k, where=where)
+        result = type(
+            "FallbackAskResult",
+            (),
+            {
+                "answer": (
+                    "I could not run full assistant generation right now, but I found relevant files "
+                    "in your local index."
+                ),
+                "hits": hits,
+                "query": body.query,
+                "deepened_files": [],
+            },
+        )()
 
     # Generate proposals from the files that surfaced in the answer
     proposals = propose_from_hits(result.hits)
@@ -112,6 +154,14 @@ async def ask_assistant(body: AssistantRequest):
                 }
             )
 
+    if not result.hits and not degraded:
+        confidence = 0.2
+        warnings.append(
+            "NO_INDEX_RESULTS: No matching indexed files were found for this query."
+        )
+
+    proposals = _attach_proposal_citations(proposals, default_citations=sources)
+
     return {
         "answer":         result.answer,
         "proposals":      proposals,
@@ -119,4 +169,7 @@ async def ask_assistant(body: AssistantRequest):
         "sources":        sources,
         "source_details": source_details,
         "deepened_files": result.deepened_files,
+        "confidence":     confidence,
+        "warnings":       warnings,
+        "degraded":       degraded,
     }

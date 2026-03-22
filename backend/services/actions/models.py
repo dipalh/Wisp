@@ -4,7 +4,8 @@ Pydantic models for the Action Engine.
 An Action represents any file operation (proposed or applied) with enough
 state to support undo. The lifecycle is:
 
-  PROPOSED → APPLIED → UNDONE
+  PROPOSED → ACCEPTED → APPLIED → UNDONE
+                       └──────→ FAILED/PARTIAL
 
 - PROPOSED: the action has been suggested but not yet executed.
 - APPLIED:  the action has been executed (file moved, deleted, etc.).
@@ -28,8 +29,11 @@ class ActionType(str, Enum):
 
 class ActionStatus(str, Enum):
     PROPOSED = "PROPOSED"
+    ACCEPTED = "ACCEPTED"
     APPLIED  = "APPLIED"
+    FAILED   = "FAILED"
     UNDONE   = "UNDONE"
+    PARTIAL  = "PARTIAL"
 
 
 class Action(BaseModel):
@@ -40,4 +44,11 @@ class Action(BaseModel):
     before_state: dict = Field(description="State before the action: {path: original_path, ...}")
     after_state: dict = Field(description="State after the action: {path: new_path} for MOVE; {} for DELETE")
     timestamp: float = Field(default_factory=time.time)
+    proposal_id: str | None = None
+    batch_id: str | None = None
+    actor: str = "system"
+    source: str | None = None
+    created_at: float = Field(default_factory=time.time)
+    applied_at: float | None = None
+    failure_reason: str | None = None
     status: ActionStatus = ActionStatus.PROPOSED
