@@ -13,6 +13,7 @@ Exclusion rules
 from __future__ import annotations
 
 import os
+import errno
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,6 +44,32 @@ class ScanIssue:
     file_state: str
     error_code: str
     error_message: str
+
+
+def _scan_issue_for_exception(path: Path, exc: BaseException) -> ScanIssue | None:
+    message = str(exc)
+    err_no = getattr(exc, "errno", None)
+    locked_errnos = {errno.EBUSY}
+    if hasattr(errno, "ETXTBSY"):
+        locked_errnos.add(errno.ETXTBSY)
+
+    if isinstance(exc, PermissionError) or err_no in {errno.EACCES, errno.EPERM}:
+        return ScanIssue(
+            path=path,
+            file_state="PERMISSION_DENIED",
+            error_code="PERMISSION_DENIED",
+            error_message=message,
+        )
+
+    if err_no in locked_errnos or "locked" in message.lower():
+        return ScanIssue(
+            path=path,
+            file_state="LOCKED",
+            error_code="LOCKED",
+            error_message=message,
+        )
+
+    return None
 
 
 def _skip_dir(name: str) -> bool:
@@ -122,29 +149,29 @@ def collect_scan_report(
             return
         try:
             entries = sorted(d.iterdir())
-        except PermissionError as exc:
-            issues.append(
-                ScanIssue(
-                    path=d,
-                    file_state="PERMISSION_DENIED",
-                    error_code="PERMISSION_DENIED",
-                    error_message=str(exc),
-                )
-            )
+        except (PermissionError, OSError) as exc:
+            issue = _scan_issue_for_exception(d, exc)
+            if issue:
+                issues.append(issue)
             return
         for item in entries:
+            # Do not follow symlinks. This prevents root-escape traversal and
+            # avoids recursive link loops.
+            try:
+                if item.is_symlink():
+                    continue
+            except (PermissionError, OSError) as exc:
+                issue = _scan_issue_for_exception(item, exc)
+                if issue:
+                    issues.append(issue)
+                continue
             try:
                 is_dir = item.is_dir()
                 is_file = item.is_file()
-            except PermissionError as exc:
-                issues.append(
-                    ScanIssue(
-                        path=item,
-                        file_state="PERMISSION_DENIED",
-                        error_code="PERMISSION_DENIED",
-                        error_message=str(exc),
-                    )
-                )
+            except (PermissionError, OSError) as exc:
+                issue = _scan_issue_for_exception(item, exc)
+                if issue:
+                    issues.append(issue)
                 continue
             if is_dir:
                 if _skip_dir(item.name):
@@ -157,33 +184,19 @@ def collect_scan_report(
                     try:
                         if item.stat().st_size > max_bytes:
                             continue
-                    except PermissionError as exc:
-                        issues.append(
-                            ScanIssue(
-                                path=item,
-                                file_state="PERMISSION_DENIED",
-                                error_code="PERMISSION_DENIED",
-                                error_message=str(exc),
-                            )
-                        )
-                        continue
-                    except OSError:
+                    except (PermissionError, OSError) as exc:
+                        issue = _scan_issue_for_exception(item, exc)
+                        if issue:
+                            issues.append(issue)
                         continue
                 elif max_bytes == 0:
                     try:
                         if item.stat().st_size > 0:
                             continue
-                    except PermissionError as exc:
-                        issues.append(
-                            ScanIssue(
-                                path=item,
-                                file_state="PERMISSION_DENIED",
-                                error_code="PERMISSION_DENIED",
-                                error_message=str(exc),
-                            )
-                        )
-                        continue
-                    except OSError:
+                    except (PermissionError, OSError) as exc:
+                        issue = _scan_issue_for_exception(item, exc)
+                        if issue:
+                            issues.append(issue)
                         continue
                 files.append(item)
 

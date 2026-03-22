@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import errno
 from dataclasses import dataclass, field
 from pathlib import Path
 from unittest.mock import patch
@@ -161,3 +162,37 @@ def test_permission_denied_during_scan_is_recorded_as_recoverable_state(
     assert denied_row["file_state"] == "PERMISSION_DENIED"
     assert denied_row["error_code"] == "PERMISSION_DENIED"
     assert "permission denied" in denied_row["error_message"].lower()
+
+
+def test_locked_directory_during_scan_is_recorded_as_locked_state(
+    client,
+    _celery_eager,
+    tmp_path,
+):
+    scan_dir = tmp_path / "scan_target"
+    scan_dir.mkdir()
+    visible = scan_dir / "visible.txt"
+    visible.write_text("hello world")
+    locked = scan_dir / "locked"
+    locked.mkdir()
+
+    from services.ingestor import scanner as scanner_module
+
+    original_iterdir = scanner_module.Path.iterdir
+
+    def _iterdir_with_locked(path_obj):
+        if path_obj == locked:
+            raise OSError(errno.EBUSY, "Resource busy: file is locked")
+        return original_iterdir(path_obj)
+
+    with patch.object(scanner_module.Path, "iterdir", autospec=True, side_effect=_iterdir_with_locked):
+        job_id = _run_scan(client, scan_dir)
+
+    rows = job_db.get_indexed_files(job_id=job_id)
+    indexed_row = next(row for row in rows if row["file_path"].endswith("visible.txt"))
+    locked_row = next(row for row in rows if row["file_path"].endswith("locked"))
+
+    assert indexed_row["file_state"] == "INDEXED"
+    assert locked_row["file_state"] == "LOCKED"
+    assert locked_row["error_code"] == "LOCKED"
+    assert "locked" in locked_row["error_message"].lower()

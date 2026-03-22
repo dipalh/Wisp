@@ -9,6 +9,8 @@ dotenv.config();
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 const rendererDevUrl = process.env.VITE_DEV_SERVER_URL;
 const apiUrl = process.env.VITE_API_URL || 'http://localhost:8000';
+const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'qwen2.5:14b';
 
 const FILE_TAG_CACHE = new Map();
 const TREE_CACHE = new Map(); // path → { node, expiresAt }
@@ -278,32 +280,36 @@ function localTagsFromName(fileName, filePath = '') {
   return tags;
 }
 
-async function geminiTags({ apiKey, fileName, filePath }) {
-  if (!apiKey) return null;
+async function llmTags({ fileName, filePath }) {
+  try {
+    const prompt = `Generate 5 concise search tags for this file. Return only comma-separated words. File name: ${fileName}. Path: ${filePath}`;
+    const response = await fetch(`${OLLAMA_BASE_URL}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: OLLAMA_MODEL,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.2,
+        max_tokens: 40
+      })
+    });
 
-  const prompt = `Generate 5 concise search tags for this file. Return only comma-separated words. File name: ${fileName}. Path: ${filePath}`;
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.2, maxOutputTokens: 40 }
-    })
-  });
+    if (!response.ok) {
+      return null;
+    }
+    const data = await response.json();
+    const text = data?.choices?.[0]?.message?.content;
+    if (!text) return null;
 
-  if (!response.ok) {
+    return text
+      .toLowerCase()
+      .split(/[,\n]/)
+      .map((t) => t.trim().replace(/[^a-z0-9-_ ]/g, ''))
+      .filter(Boolean)
+      .slice(0, 10);
+  } catch {
     return null;
   }
-  const data = await response.json();
-  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) return null;
-
-  return text
-    .toLowerCase()
-    .split(/[,\n]/)
-    .map((t) => t.trim().replace(/[^a-z0-9-_ ]/g, ''))
-    .filter(Boolean)
-    .slice(0, 10);
 }
 
 async function suggestDeleteCandidates(rootPath) {
@@ -533,14 +539,13 @@ ipcMain.handle('files:tag', async (_, payload) => {
   const { rootPath, provider } = payload;
   const files = [];
   await walkFiles(rootPath, files, 0, 4);
-  const apiKey = process.env.GEMINI_API_KEY;
 
   const results = await Promise.all(files.map(async (file) => {
     const cacheKey = `${provider}:${file.path}`;
     if (FILE_TAG_CACHE.has(cacheKey)) return FILE_TAG_CACHE.get(cacheKey);
 
-    const tags = (provider === 'api' && apiKey)
-      ? ((await geminiTags({ apiKey, fileName: file.name, filePath: file.path })) ?? localTagsFromName(file.name, file.path))
+    const tags = (provider === 'api')
+      ? ((await llmTags({ fileName: file.name, filePath: file.path })) ?? localTagsFromName(file.name, file.path))
       : localTagsFromName(file.name, file.path);
 
     const result = { path: file.path, name: file.name, tags };

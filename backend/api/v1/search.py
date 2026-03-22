@@ -31,6 +31,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from services.embedding import pipeline
+from services.job_db import get_indexed_state_map
 from services.roots import is_under_root
 
 router = APIRouter()
@@ -67,6 +68,7 @@ def semantic_search(body: SearchRequest):
 
     # Root scope guard — drop hits whose file is outside all registered roots
     hits = [h for h in hits if is_under_root(h.file_path or "")]
+    state_map = get_indexed_state_map([h.file_id for h in hits])
 
     results = [
         {
@@ -76,6 +78,9 @@ def semantic_search(body: SearchRequest):
             "score":     h.score,
             "snippet":   h.text[:300],
             "depth":     h.depth,
+            "file_state": state_map.get(h.file_id, {}).get("file_state", "INDEXED"),
+            "error_code": state_map.get(h.file_id, {}).get("error_code", ""),
+            "error_message": state_map.get(h.file_id, {}).get("error_message", ""),
         }
         for h in hits
     ]

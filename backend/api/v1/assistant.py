@@ -35,6 +35,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from services.embedding import pipeline
+from services.job_db import get_indexed_state_map
 from services.proposer import propose_from_hits
 
 router = APIRouter()
@@ -82,20 +83,33 @@ async def ask_assistant(body: AssistantRequest):
 
     # Generate proposals from the files that surfaced in the answer
     proposals = propose_from_hits(result.hits)
+    state_map = get_indexed_state_map([hit.file_id for hit in result.hits])
 
     # Build a deduplicated sources list (file paths, no chunk noise)
     seen: set[str] = set()
     sources: list[str] = []
+    source_details: list[dict[str, str]] = []
     for hit in result.hits:
         label = hit.file_path or hit.file_id
         if label and label not in seen:
             seen.add(label)
             sources.append(label)
+            state = state_map.get(hit.file_id, {})
+            source_details.append(
+                {
+                    "file_id": hit.file_id,
+                    "file_path": hit.file_path,
+                    "file_state": state.get("file_state", "INDEXED"),
+                    "error_code": state.get("error_code", ""),
+                    "error_message": state.get("error_message", ""),
+                }
+            )
 
     return {
         "answer":         result.answer,
         "proposals":      proposals,
         "query":          result.query,
         "sources":        sources,
+        "source_details": source_details,
         "deepened_files": result.deepened_files,
     }

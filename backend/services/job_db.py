@@ -460,8 +460,11 @@ def reconcile_indexed_files(job_id: str, root_paths: list[str]) -> None:
 
             for row in scoped_rows:
                 if row["last_seen_job_id"] == job_id:
-                    if row["file_state"] == FileState.PERMISSION_DENIED.value:
-                        state = FileState.PERMISSION_DENIED.value
+                    if row["file_state"] in {
+                        FileState.PERMISSION_DENIED.value,
+                        FileState.LOCKED.value,
+                    }:
+                        state = row["file_state"]
                     else:
                         state = FileState.INDEXED.value
                 elif (
@@ -509,6 +512,32 @@ def get_indexed_files(
                 (limit,),
             ).fetchall()
         return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_indexed_state_map(file_ids: list[str]) -> dict[str, dict[str, str]]:
+    """Return per-file reconciliation state details keyed by file_id."""
+    normalized = [fid for fid in dict.fromkeys(file_ids) if fid]
+    if not normalized:
+        return {}
+
+    placeholders = ",".join("?" for _ in normalized)
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            f"SELECT file_id, file_state, error_code, error_message "
+            f"FROM indexed_files WHERE file_id IN ({placeholders})",
+            tuple(normalized),
+        ).fetchall()
+        return {
+            row["file_id"]: {
+                "file_state": row["file_state"],
+                "error_code": row["error_code"],
+                "error_message": row["error_message"],
+            }
+            for row in rows
+        }
     finally:
         conn.close()
 

@@ -246,6 +246,44 @@ def test_search_root_scope_filters_out_of_scope_hits(client):
     assert data["results"][0]["file_id"] == "in"
 
 
+def test_search_results_include_index_state_fields(client):
+    """Search results should surface reconciliation state + error fields."""
+    fake_hits = [
+        _FakeSearchHit(
+            chunk_id="stale:0",
+            file_id="stale",
+            chunk_index=0,
+            file_path="/Users/test/Documents/old.txt",
+            ext=".txt",
+            text="old note",
+            score=0.8,
+            depth="deep",
+        ),
+    ]
+
+    with patch("api.v1.search.pipeline") as mock_pipeline, \
+         patch("api.v1.search.is_under_root", return_value=True), \
+         patch(
+             "api.v1.search.get_indexed_state_map",
+             return_value={
+                 "stale": {
+                     "file_state": "MISSING_EXTERNALLY",
+                     "error_code": "MISSING_EXTERNALLY",
+                     "error_message": "file no longer exists",
+                 }
+             },
+             create=True,
+         ):
+        mock_pipeline.search.return_value = fake_hits
+        resp = client.post("/api/v1/search", json={"query": "old note"})
+
+    assert resp.status_code == 200
+    result = resp.json()["results"][0]
+    assert result["file_state"] == "MISSING_EXTERNALLY"
+    assert result["error_code"] == "MISSING_EXTERNALLY"
+    assert "no longer exists" in result["error_message"]
+
+
 # ═══════════════════════════════════════════════════════════════════════
 #  Store lifecycle — startup & shutdown
 # ═══════════════════════════════════════════════════════════════════════

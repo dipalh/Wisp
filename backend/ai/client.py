@@ -1,12 +1,27 @@
-from google import genai
-from config import get_gemini_api_key
+from __future__ import annotations
 
-MODEL_NAME = "gemini-2.5-flash"
-EMBED_MODEL = "models/gemini-embedding-001"
+import os
+from urllib.parse import urlparse
+
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+MODEL_NAME = os.getenv("OLLAMA_MODEL", "qwen2.5:14b")
 
 
-def get_client() -> genai.Client:
-    api_key = get_gemini_api_key()
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY is not set in your .env file")
-    return genai.Client(api_key=api_key)
+def _is_local_hostname(hostname: str | None) -> bool:
+    if not hostname:
+        return False
+    return hostname in {"localhost", "127.0.0.1", "::1"}
+
+
+def get_ollama_base_url() -> str:
+    """Return a validated local-only Ollama URL.
+
+    Privacy requirement: inference endpoints must be local-only.
+    """
+    parsed = urlparse(OLLAMA_BASE_URL)
+    if parsed.scheme not in {"http", "https"} or not _is_local_hostname(parsed.hostname):
+        raise RuntimeError(
+            "OLLAMA_BASE_URL must point to localhost (privacy policy). "
+            f"Got: {OLLAMA_BASE_URL}"
+        )
+    return OLLAMA_BASE_URL.rstrip("/")

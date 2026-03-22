@@ -239,3 +239,50 @@ def test_collects_normal_mixed_tree(tmp_path: Path):
     names = {f.name for f in files}
 
     assert names == {"report.pdf", "notes.txt", "vacation.jpg", "selfie.png"}
+
+
+def test_skips_symlink_file_that_points_outside_root(tmp_path: Path):
+    """Scanner must not follow symlink files outside the selected root."""
+    root = tmp_path / "root"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    (root / "inside.txt").write_text("safe")
+    (outside / "secret.txt").write_text("do not index")
+
+    link = root / "secret-link.txt"
+    try:
+        os.symlink(outside / "secret.txt", link)
+    except OSError as exc:
+        pytest.skip(f"symlink unsupported in test environment: {exc}")
+
+    files = collect_files(root)
+    names = {f.name for f in files}
+    resolved_root = root.resolve()
+
+    assert "inside.txt" in names
+    assert "secret-link.txt" not in names
+    assert all(path.resolve().is_relative_to(resolved_root) for path in files)
+
+
+def test_skips_symlink_directory_that_points_outside_root(tmp_path: Path):
+    """Scanner must not recurse into symlinked directories outside root."""
+    root = tmp_path / "root"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "exfil.txt").write_text("outside data")
+
+    link_dir = root / "outside-link"
+    try:
+        os.symlink(outside, link_dir)
+    except OSError as exc:
+        pytest.skip(f"symlink unsupported in test environment: {exc}")
+
+    files = collect_files(root)
+    names = {f.name for f in files}
+    resolved_root = root.resolve()
+
+    assert "exfil.txt" not in names
+    assert all(path.resolve().is_relative_to(resolved_root) for path in files)
