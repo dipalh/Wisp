@@ -12,9 +12,11 @@ Public surface
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from ai.generate import generate_structured
 from services.embedding import store
-from services.organizer.models import DirectorySuggestions
+from services.organizer.models import DirectoryProposal, DirectorySuggestions, FileMapping
 
 
 # ── Tree builder ──────────────────────────────────────────────────────────────
@@ -123,6 +125,76 @@ async def suggest_directories() -> DirectorySuggestions:
                 "Run the ingestion pipeline first, then request suggestions."
             ),
         )
+
+    manifest = _build_manifest(files)
+    return await generate_structured(manifest, DirectorySuggestions, system=_SYSTEM)
+
+
+def _mock_destination(file_path: str, ext: str) -> str:
+    name = Path(file_path).name
+    ext_l = (ext or "").lower()
+    if ext_l in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}:
+        return f"Media/Images/{name}"
+    if ext_l in {".mp4", ".mov", ".avi", ".mkv"}:
+        return f"Media/Videos/{name}"
+    if ext_l in {".pdf", ".doc", ".docx", ".txt", ".md"}:
+        return f"Documents/{name}"
+    return f"Misc/{name}"
+
+
+def _mock_suggestions(files: list[dict]) -> DirectorySuggestions:
+    ordered = sorted(files, key=lambda f: (f.get("file_path") or "", f.get("ext") or ""))
+    mappings = [
+        FileMapping(
+            original_path=f["file_path"],
+            suggested_path=_mock_destination(f["file_path"], f.get("ext", "")),
+        )
+        for f in ordered
+    ]
+    citations = [f["file_path"] for f in ordered[: min(3, len(ordered))]]
+    proposal = DirectoryProposal(
+        name="Deterministic File Type Strategy",
+        rationale="Groups files by stable media/document buckets for predictable demo-safe organization.",
+        reasons=[
+            "Stable categorization by extension is deterministic and reproducible.",
+            "Layout is easy to review before any action is applied.",
+        ],
+        citations=citations,
+        folder_tree=sorted({Path(m.suggested_path).parent.as_posix() + "/" for m in mappings}),
+        mappings=mappings,
+    )
+    return DirectorySuggestions(
+        proposals=[proposal],
+        recommendation="Use Deterministic File Type Strategy for a predictable review-first organization pass.",
+    )
+
+
+async def suggest_directories(mock_mode: bool = False) -> DirectorySuggestions:
+    """
+    Read all indexed files from LanceDB and ask Gemini to propose directory structures.
+
+    Args:
+        mock_mode: When True, bypass model generation and return deterministic
+            suggestions from file metadata only.
+
+    Returns:
+        DirectorySuggestions with proposals and a recommendation.
+        If no files are indexed yet, returns an empty proposals list with an
+        explanatory recommendation string.
+    """
+    files = store.list_files()
+
+    if not files:
+        return DirectorySuggestions(
+            proposals=[],
+            recommendation=(
+                "No files have been indexed yet. "
+                "Run the ingestion pipeline first, then request suggestions."
+            ),
+        )
+
+    if mock_mode:
+        return _mock_suggestions(files)
 
     manifest = _build_manifest(files)
     return await generate_structured(manifest, DirectorySuggestions, system=_SYSTEM)

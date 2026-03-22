@@ -17,6 +17,14 @@ class FileMapping(BaseModel):
 class DirectoryProposal(BaseModel):
     name: str = Field(description="Short scheme name, e.g. 'By Project' or 'By File Type'")
     rationale: str = Field(description="1-2 sentences explaining the logic behind this structure")
+    reasons: list[str] = Field(
+        min_length=1,
+        description="Concrete reasons this strategy is useful, e.g. grouping by project, client, or workflow.",
+    )
+    citations: list[str] = Field(
+        min_length=1,
+        description="Evidence references (file paths or IDs) supporting the proposal.",
+    )
     folder_tree: list[str] = Field(
         description="List of directory paths that make up the proposed structure, e.g. ['Projects/Backend/', 'Media/Images/']"
     )
