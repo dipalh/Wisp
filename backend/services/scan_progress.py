@@ -35,9 +35,16 @@ class ScanStats:
 
 
 class ScanProgressTracker:
-    def __init__(self, job_id: str, emit_progress: Callable[..., None]) -> None:
+    def __init__(
+        self,
+        job_id: str,
+        emit_progress: Callable[..., None],
+        *,
+        progress_cadence_files: int = 0,
+    ) -> None:
         self.job_id = job_id
         self._emit_progress = emit_progress
+        self._progress_cadence_files = max(0, int(progress_cadence_files))
         self.stats = ScanStats()
         self.total = 0
         self.completed = 0
@@ -47,6 +54,9 @@ class ScanProgressTracker:
         self.total = total
         self.stats.discovered = total
         self._emit(0, total, f"Discovered {total} files", ScanStage.DISCOVERED)
+
+    def record_metadata(self, file_path: Path) -> None:
+        self._emit(self.completed, self.total, f"Metadata {file_path.name}", ScanStage.DISCOVERED)
 
     def record_result(self, file_path: Path, *, depth: str, skipped: bool) -> None:
         if skipped:
@@ -59,6 +69,7 @@ class ScanProgressTracker:
                 f"Scored {self.completed}/{self.total}: {file_path.name}",
                 ScanStage.SCORED,
             )
+            self._emit_cadence()
             return
 
         self.stats.previewed += 1
@@ -69,16 +80,28 @@ class ScanProgressTracker:
         self.stats.scored += 1
         self.completed += 1
         self._emit(self.completed, self.total, f"Scored {self.completed}/{self.total}: {file_path.name}", ScanStage.SCORED)
+        self._emit_cadence()
 
     def record_failure(self, file_path: Path, message: str) -> None:
         self.stats.failed += 1
         self.completed += 1
         self._emit(self.completed, self.total, f"Failed {file_path.name}: {message}", ScanStage.SCORED)
+        self._emit_cadence()
 
     def record_issue(self, issue_path: Path, message: str) -> None:
         self.stats.failed += 1
         self.completed += 1
         self._emit(self.completed, self.total, f"Issue {issue_path.name}: {message}", ScanStage.SCORED)
+        self._emit_cadence()
+
+    def _emit_cadence(self) -> None:
+        if self._progress_cadence_files <= 0:
+            return
+        if self.completed >= self.total:
+            return
+        if self.completed % self._progress_cadence_files != 0:
+            return
+        self._emit(self.completed, self.total, f"Progress {self.completed}/{self.total}", self.stage)
 
     def _emit(self, current: int, total: int, message: str, candidate_stage: ScanStage) -> None:
         if _STAGE_ORDER[candidate_stage] > _STAGE_ORDER[self.stage]:

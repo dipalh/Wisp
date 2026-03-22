@@ -29,12 +29,16 @@ export const REQUIRED_WISP_API_METHODS = [
 
 export function assertWispApiContract(api: unknown): asserts api is Window['wispApi'] {
     if (!api || typeof api !== 'object') {
-        throw new Error('window.wispApi is missing');
+        throw new Error(
+            `window.wispApi is missing. Required methods: ${REQUIRED_WISP_API_METHODS.join(', ')}`,
+        );
     }
 
     for (const method of REQUIRED_WISP_API_METHODS) {
         if (typeof (api as Record<string, unknown>)[method] !== 'function') {
-            throw new Error(`window.wispApi.${method} is missing`);
+            throw new Error(
+                `window.wispApi.${method} is missing. Required methods: ${REQUIRED_WISP_API_METHODS.join(', ')}`,
+            );
         }
     }
 }

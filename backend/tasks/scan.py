@@ -36,6 +36,10 @@ from services.scan_progress import ScanProgressTracker
 
 logger = logging.getLogger("wisp.tasks.scan")
 
+SCAN_BATCH_SIZE = 4
+SCAN_MAX_CONCURRENT_FILES = 4
+SCAN_PROGRESS_CADENCE_FILES = 0
+
 
 # ── Real scan task ────────────────────────────────────────────────────
 
@@ -59,18 +63,19 @@ async def _run_pipeline(
 
     total = len(all_files)
     indexed = 0
-    BATCH_SIZE = 4
+    file_sem = asyncio.Semaphore(max(1, int(SCAN_MAX_CONCURRENT_FILES)))
 
     async def _process_one(file_path: Path) -> tuple[Path, object | None, str | None]:
         """Ingest a single file. Returns (path, result, error_message)."""
         filename = file_path.name
         ext = file_path.suffix.lower()
 
-        try:
-            result = await pipeline.ingest_file(file_path)
-        except Exception as exc:
-            logger.warning("ingest_file failed for %s: %s", file_path, exc)
-            return file_path, None, str(exc)
+        async with file_sem:
+            try:
+                result = await pipeline.ingest_file(file_path)
+            except Exception as exc:
+                logger.warning("ingest_file failed for %s: %s", file_path, exc)
+                return file_path, None, str(exc)
 
         is_del = False
         try:
@@ -107,8 +112,8 @@ async def _run_pipeline(
 
     pipeline.init_store()
     try:
-        for batch_start in range(0, total, BATCH_SIZE):
-            batch = all_files[batch_start:batch_start + BATCH_SIZE]
+        for batch_start in range(0, total, SCAN_BATCH_SIZE):
+            batch = all_files[batch_start:batch_start + SCAN_BATCH_SIZE]
             batch_names = ", ".join(f.name for f in batch)
             update_progress(job_id, batch_start, total, f"Indexing: {batch_names}")
 
@@ -122,6 +127,7 @@ async def _run_pipeline(
                     continue
                 file_path, result, error_message = outcome
                 if result is not None:
+                    tracker.record_metadata(file_path)
                     indexed += 1
                     tracker.record_result(
                         file_path,
@@ -177,7 +183,11 @@ def scan_and_index(job_id: str, folder_paths: list[str]) -> None:
             set_status(job_id, "success", "No files found in the selected folders")
             return
 
-        tracker = ScanProgressTracker(job_id, update_progress)
+        tracker = ScanProgressTracker(
+            job_id,
+            update_progress,
+            progress_cadence_files=SCAN_PROGRESS_CADENCE_FILES,
+        )
         tracker.begin(total + len(scan_issues))
 
         # Run the async pipeline in a dedicated thread so it always gets a

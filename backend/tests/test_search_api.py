@@ -321,6 +321,83 @@ def test_search_results_normalize_error_code_from_file_state(client, file_state)
     assert result["error_code"] == file_state
 
 
+def test_search_results_surface_stale_state_with_deterministic_message(client):
+    fake_hits = [
+        _FakeSearchHit(
+            chunk_id="stale:0",
+            file_id="stale",
+            chunk_index=0,
+            file_path="/Users/test/Documents/stale.txt",
+            ext=".txt",
+            text="stale note",
+            score=0.8,
+            depth="deep",
+        ),
+    ]
+
+    with patch("api.v1.search.pipeline") as mock_pipeline, \
+         patch("api.v1.search.is_under_root", return_value=True), \
+         patch(
+             "api.v1.search.get_indexed_state_map",
+             return_value={
+                 "stale": {
+                     "file_state": "STALE",
+                     "error_code": "",
+                     "error_message": "",
+                 }
+             },
+             create=True,
+         ):
+        mock_pipeline.search.return_value = fake_hits
+        resp = client.post("/api/v1/search", json={"query": "stale note"})
+
+    assert resp.status_code == 200
+    result = resp.json()["results"][0]
+    assert result["file_state"] == "STALE"
+    assert result["error_code"] == "STALE"
+    assert "STALE" in result["error_message"]
+
+
+def test_search_results_surface_quarantined_state_with_deterministic_message(client):
+    fake_hits = [
+        _FakeSearchHit(
+            chunk_id="quarantined:0",
+            file_id="quarantined",
+            chunk_index=0,
+            file_path="/Users/test/Documents/.wisp_quarantine/old.tmp",
+            ext=".tmp",
+            text="quarantined note",
+            score=0.8,
+            depth="deep",
+        ),
+    ]
+
+    with patch("api.v1.search.pipeline") as mock_pipeline, \
+         patch("api.v1.search.is_under_root", return_value=True), \
+         patch(
+             "api.v1.search.get_indexed_state_map",
+             return_value={
+                 "quarantined": {
+                     "file_state": "QUARANTINED",
+                     "error_code": "",
+                     "error_message": "",
+                 }
+             },
+             create=True,
+         ):
+        mock_pipeline.search.return_value = fake_hits
+        resp = client.post("/api/v1/search", json={"query": "quarantined note"})
+
+    assert resp.status_code == 200
+    result = resp.json()["results"][0]
+    assert result["file_state"] == "QUARANTINED"
+    assert result["error_code"] == "QUARANTINED"
+    assert (
+        result["error_message"]
+        == "QUARANTINED: File is in quarantine and excluded from active indexing."
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════════
 #  Store lifecycle — startup & shutdown
 # ═══════════════════════════════════════════════════════════════════════

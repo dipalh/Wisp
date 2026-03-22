@@ -126,3 +126,90 @@ def test_assistant_source_details_normalize_error_code_from_file_state(file_stat
     detail = resp.json()["source_details"][0]
     assert detail["file_state"] == file_state
     assert detail["error_code"] == file_state
+
+
+def test_assistant_source_details_surface_stale_state_with_deterministic_message():
+    client = _client()
+
+    fake_result = _FakeAskResult(
+        answer="state answer",
+        hits=[
+            _FakeHit(
+                chunk_id="stale:0",
+                file_id="stale",
+                chunk_index=0,
+                file_path="/Users/test/Documents/stale.txt",
+                ext=".txt",
+                text="stale note",
+                score=0.88,
+                depth="deep",
+            )
+        ],
+        query="state query",
+    )
+
+    with patch("api.v1.assistant.pipeline.ask", new=AsyncMock(return_value=fake_result)), \
+         patch("api.v1.assistant.propose_from_hits", return_value=[]), \
+         patch(
+             "api.v1.assistant.get_indexed_state_map",
+             return_value={
+                 "stale": {
+                     "file_state": "STALE",
+                     "error_code": "",
+                     "error_message": "",
+                 }
+             },
+             create=True,
+         ):
+        resp = client.post("/api/v1/assistant", json={"query": "state query"})
+
+    assert resp.status_code == 200
+    detail = resp.json()["source_details"][0]
+    assert detail["file_state"] == "STALE"
+    assert detail["error_code"] == "STALE"
+    assert "STALE" in detail["error_message"]
+
+
+def test_assistant_source_details_surface_quarantined_state_with_deterministic_message():
+    client = _client()
+
+    fake_result = _FakeAskResult(
+        answer="state answer",
+        hits=[
+            _FakeHit(
+                chunk_id="quarantined:0",
+                file_id="quarantined",
+                chunk_index=0,
+                file_path="/Users/test/Documents/.wisp_quarantine/old.tmp",
+                ext=".tmp",
+                text="quarantined note",
+                score=0.88,
+                depth="deep",
+            )
+        ],
+        query="state query",
+    )
+
+    with patch("api.v1.assistant.pipeline.ask", new=AsyncMock(return_value=fake_result)), \
+         patch("api.v1.assistant.propose_from_hits", return_value=[]), \
+         patch(
+             "api.v1.assistant.get_indexed_state_map",
+             return_value={
+                 "quarantined": {
+                     "file_state": "QUARANTINED",
+                     "error_code": "",
+                     "error_message": "",
+                 }
+             },
+             create=True,
+         ):
+        resp = client.post("/api/v1/assistant", json={"query": "state query"})
+
+    assert resp.status_code == 200
+    detail = resp.json()["source_details"][0]
+    assert detail["file_state"] == "QUARANTINED"
+    assert detail["error_code"] == "QUARANTINED"
+    assert (
+        detail["error_message"]
+        == "QUARANTINED: File is in quarantine and excluded from active indexing."
+    )
