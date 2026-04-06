@@ -146,7 +146,7 @@ async def _run_pipeline(
 def scan_and_index(job_id: str, folder_paths: list[str]) -> None:
     """Walk folders, embed every file via the 3-layer pipeline, track progress."""
     try:
-        from services.ingestor.scanner import collect_scan_report
+        from services.ingestor.scanner import ScanIssue, collect_scan_report
 
         set_status(job_id, "running")
         update_progress(job_id, 0, 0, "Enumerating files\u2026")
@@ -161,28 +161,17 @@ def scan_and_index(job_id: str, folder_paths: list[str]) -> None:
                 files, issues = collect_scan_report(root)
                 all_files.extend(files)
                 scan_issues.extend(issues)
+            else:
+                scan_issues.append(
+                    ScanIssue(
+                        path=root,
+                        file_state="MISSING_EXTERNALLY",
+                        error_code="MISSING_EXTERNALLY",
+                        error_message="Scan root unavailable or not a directory.",
+                    )
+                )
 
         total = len(all_files)
-        if total == 0:
-            update_progress(
-                job_id,
-                0,
-                0,
-                "No files found during discovery",
-                stage="SCORED",
-                stats={
-                    "discovered": 0,
-                    "previewed": 0,
-                    "embedded": 0,
-                    "scored": 0,
-                    "cached": 0,
-                    "failed": 0,
-                },
-            )
-            reconcile_indexed_files(job_id, scanned_roots)
-            set_status(job_id, "success", "No files found in the selected folders")
-            return
-
         tracker = ScanProgressTracker(
             job_id,
             update_progress,
@@ -190,11 +179,13 @@ def scan_and_index(job_id: str, folder_paths: list[str]) -> None:
         )
         tracker.begin(total + len(scan_issues))
 
-        # Run the async pipeline in a dedicated thread so it always gets a
-        # clean event loop — even when Celery eager mode executes inside
-        # FastAPI's existing async context (tests).
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            indexed = pool.submit(asyncio.run, _run_pipeline(job_id, all_files, tracker)).result()
+        indexed = 0
+        if total > 0:
+            # Run the async pipeline in a dedicated thread so it always gets a
+            # clean event loop — even when Celery eager mode executes inside
+            # FastAPI's existing async context (tests).
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                indexed = pool.submit(asyncio.run, _run_pipeline(job_id, all_files, tracker)).result()
 
         for issue in scan_issues:
             upsert_indexed_file(
@@ -215,6 +206,31 @@ def scan_and_index(job_id: str, folder_paths: list[str]) -> None:
             )
             tracker.record_issue(issue.path, issue.error_message)
         reconcile_indexed_files(job_id, scanned_roots)
+        if total == 0:
+            update_progress(
+                job_id,
+                0,
+                0,
+                "No files found during discovery",
+                stage="SCORED",
+                stats={
+                    "discovered": 0,
+                    "previewed": 0,
+                    "embedded": 0,
+                    "scored": 0,
+                    "cached": 0,
+                    "failed": 0,
+                },
+            )
+            if scan_issues:
+                set_status(
+                    job_id,
+                    "success",
+                    f"No indexable files found; recorded {len(scan_issues)} root/path issue(s).",
+                )
+            else:
+                set_status(job_id, "success", "No files found in the selected folders")
+            return
         set_status(
             job_id, "success",
             f"Scan complete \u2014 {indexed}/{total} files indexed",

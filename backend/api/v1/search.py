@@ -32,7 +32,7 @@ from pydantic import BaseModel, Field
 
 from services.embedding import pipeline
 from services.file_state import normalize_error_code, normalize_error_message
-from services.job_db import get_indexed_state_map
+from services.job_db import get_indexed_metadata_map, get_indexed_state_map
 from services.roots import is_under_root
 
 router = APIRouter()
@@ -81,6 +81,7 @@ def semantic_search(body: SearchRequest):
     # Root scope guard — drop hits whose file is outside all registered roots
     hits = [h for h in hits if is_under_root(h.file_path or "")]
     state_map = get_indexed_state_map([h.file_id for h in hits])
+    metadata_map = get_indexed_metadata_map([h.file_id for h in hits])
     hits = sorted(
         hits,
         key=lambda h: (
@@ -110,6 +111,7 @@ def semantic_search(body: SearchRequest):
                 state_map.get(h.file_id, {}).get("file_state", "INDEXED"),
                 state_map.get(h.file_id, {}).get("error_message", ""),
             ),
+            "metadata": metadata_map.get(h.file_id, {}),
         }
         for h in hits
     ]

@@ -48,11 +48,14 @@ def test_post_organize_proposals_returns_strategy_envelope():
     assert body["recommendation"] == "Use By Project for clearer context."
 
 
-def test_post_organize_batches_apply_route_contract():
+def test_post_organize_batches_apply_route_contract(tmp_path):
     client = _client()
+    src = tmp_path / "a.txt"
+    src.write_text("hello")
+    dst = tmp_path / "b.txt"
     accept = client.post(
         "/organize/proposals/proposal-batch/accept",
-        json={"mappings": [{"original_path": "/tmp/a.txt", "suggested_path": "/tmp/b.txt"}]},
+        json={"mappings": [{"original_path": str(src), "suggested_path": str(dst)}]},
     )
     assert accept.status_code == 200
     batch_id = accept.json()["batch_id"]
@@ -60,17 +63,27 @@ def test_post_organize_batches_apply_route_contract():
     apply = client.post(f"/organize/batches/{batch_id}/apply")
     assert apply.status_code == 200
     assert apply.json() == {"ok": True, "batch_id": batch_id, "applied": True}
+    assert not src.exists()
+    assert dst.exists()
 
 
-def test_post_organize_batches_undo_route_contract():
+def test_post_organize_batches_undo_route_contract(tmp_path):
     client = _client()
+    src = tmp_path / "a.txt"
+    src.write_text("hello")
+    dst = tmp_path / "b.txt"
     accept = client.post(
         "/organize/proposals/proposal-batch-undo/accept",
-        json={"mappings": [{"original_path": "/tmp/a.txt", "suggested_path": "/tmp/b.txt"}]},
+        json={"mappings": [{"original_path": str(src), "suggested_path": str(dst)}]},
     )
     assert accept.status_code == 200
     batch_id = accept.json()["batch_id"]
 
+    apply = client.post(f"/organize/batches/{batch_id}/apply")
+    assert apply.status_code == 200
+
     undo = client.post(f"/organize/batches/{batch_id}/undo")
     assert undo.status_code == 200
     assert undo.json() == {"ok": True, "batch_id": batch_id, "undone": True}
+    assert src.exists()
+    assert not dst.exists()

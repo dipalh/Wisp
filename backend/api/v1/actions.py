@@ -10,34 +10,16 @@ Routes
 """
 from __future__ import annotations
 
-import shutil
-from pathlib import Path
-
 from fastapi import APIRouter, HTTPException
 
 import services.actions as action_store
+from services.actions.batch_executor import apply_batch as apply_action_batch
+from services.actions.batch_executor import undo_action_filesystem
+from services.actions.batch_executor import undo_batch as undo_action_batch
 from services.actions.executor import ExecutionError, execute_action
-from services.actions.models import Action, ActionStatus, ActionType
+from services.actions.models import Action, ActionStatus
 
 router = APIRouter()
-
-
-def _undo_action_filesystem(action: Action) -> tuple[bool, str | None, str | None]:
-    if action.type == ActionType.TAG:
-        return True, None, None
-
-    src = action.after_state.get("path")
-    dst = action.before_state.get("path")
-    if not src or not dst:
-        return False, "UNDO_MISSING_PATH_STATE", "Action missing path in state"
-    if not Path(src).exists():
-        return False, "UNDO_SOURCE_MISSING", f"Undo source file missing: {src}"
-    try:
-        Path(dst).parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(src, dst)
-        return True, None, None
-    except Exception as exc:
-        return False, "UNDO_FAILED", f"Could not reverse action: {exc}"
 
 
 @router.get("", summary="List actions")
@@ -111,7 +93,7 @@ async def undo_action(action_id: str):
         return action_store.set_status(action_id, ActionStatus.UNDONE)
 
     # APPLIED — need to physically reverse
-    ok, code, error = _undo_action_filesystem(action)
+    ok, code, error = undo_action_filesystem(action)
     if not ok:
         raise HTTPException(status_code=500, detail={"code": code, "message": error})
     return action_store.set_status(action_id, ActionStatus.UNDONE)
@@ -135,123 +117,15 @@ async def create_batch(payload: dict):
 
 @router.post("/batches/{batch_id}/apply", summary="Apply an action batch")
 async def apply_batch(batch_id: str):
-    batch = action_store.get_batch(batch_id)
-    if batch is None:
+    result = apply_action_batch(batch_id)
+    if result is None:
         raise HTTPException(status_code=404, detail=f"Batch '{batch_id}' not found")
-
-    details: list[dict] = []
-    applied = 0
-    failed = 0
-    for action_id in batch["action_ids"]:
-        try:
-            execute_action(action_id)
-            details.append({"action_id": action_id, "status": ActionStatus.APPLIED.value})
-            applied += 1
-        except ExecutionError as exc:
-            existing = action_store.get(action_id)
-            if existing is not None:
-                action_store.set_status(
-                    action_id,
-                    ActionStatus.FAILED,
-                    failure_reason=str(exc),
-                )
-            details.append(
-                {
-                    "action_id": action_id,
-                    "status": ActionStatus.FAILED.value,
-                    "code": exc.code,
-                    "message": str(exc),
-                }
-            )
-            failed += 1
-
-    if applied and failed:
-        status = ActionStatus.PARTIAL
-    elif applied:
-        status = ActionStatus.APPLIED
-    else:
-        status = ActionStatus.FAILED
-
-    action_store.set_batch_status(batch_id, status)
-    return {
-        "ok": True,
-        "batch_id": batch_id,
-        "status": status.value,
-        "applied": applied,
-        "failed": failed,
-        "details": details,
-    }
+    return result
 
 
 @router.post("/batches/{batch_id}/undo", summary="Undo an action batch")
 async def undo_batch(batch_id: str):
-    batch = action_store.get_batch(batch_id)
-    if batch is None:
+    result = undo_action_batch(batch_id)
+    if result is None:
         raise HTTPException(status_code=404, detail=f"Batch '{batch_id}' not found")
-
-    details: list[dict] = []
-    undone = 0
-    failed = 0
-    for action_id in batch["action_ids"]:
-        action = action_store.get(action_id)
-        if action is None:
-            details.append(
-                {
-                    "action_id": action_id,
-                    "status": ActionStatus.FAILED.value,
-                    "code": "ACTION_NOT_FOUND",
-                    "message": f"Action not found: {action_id}",
-                }
-            )
-            failed += 1
-            continue
-        if action.status == ActionStatus.UNDONE:
-            details.append({"action_id": action_id, "status": ActionStatus.UNDONE.value})
-            undone += 1
-            continue
-        if action.status != ActionStatus.APPLIED:
-            details.append(
-                {
-                    "action_id": action_id,
-                    "status": ActionStatus.FAILED.value,
-                    "code": "ACTION_NOT_APPLIED",
-                    "message": f"Action {action_id} is {action.status.value}, expected APPLIED",
-                }
-            )
-            failed += 1
-            continue
-
-        ok, code, error = _undo_action_filesystem(action)
-        if not ok:
-            action_store.set_status(action_id, ActionStatus.PARTIAL, failure_reason=error)
-            details.append(
-                {
-                    "action_id": action_id,
-                    "status": ActionStatus.FAILED.value,
-                    "code": code,
-                    "message": error,
-                }
-            )
-            failed += 1
-            continue
-
-        action_store.set_status(action_id, ActionStatus.UNDONE)
-        details.append({"action_id": action_id, "status": ActionStatus.UNDONE.value})
-        undone += 1
-
-    if undone and failed:
-        status = ActionStatus.PARTIAL
-    elif undone:
-        status = ActionStatus.UNDONE
-    else:
-        status = ActionStatus.FAILED
-
-    action_store.set_batch_status(batch_id, status)
-    return {
-        "ok": True,
-        "batch_id": batch_id,
-        "status": status.value,
-        "undone": undone,
-        "failed": failed,
-        "details": details,
-    }
+    return result

@@ -44,7 +44,7 @@ export default function OrganizeView({ hasRoot, onOrganize, onAddFolder, busy, r
                 </div>
                 <h2 className="empty-state-title">Add a folder first</h2>
                 <p className="empty-state-desc">
-                    Pick a folder so Wisp can analyze and auto-sort its contents.
+                    Pick a folder so Wisp can analyze it and build an organization plan.
                 </p>
                 <button className="btn btn-primary" onClick={onAddFolder}>
                     <FolderPlus size={15} />
@@ -119,8 +119,8 @@ export default function OrganizeView({ hasRoot, onOrganize, onAddFolder, busy, r
                 </div>
                 <h2 className="organize-hero-title">Smart Organize</h2>
                 <p className="organize-hero-desc">
-                    Moves top-level files in your selected folder into category
-                    subfolders based on file type.
+                    Builds a recommended organization strategy from indexed file context,
+                    then applies the current best plan.
                 </p>
 
                 <div className="organize-categories">
@@ -160,8 +160,8 @@ export default function OrganizeView({ hasRoot, onOrganize, onAddFolder, busy, r
                 <div className="organize-info-box">
                     <Info size={14} />
                     <p>
-                        Only top-level files are moved. Existing subfolders are left untouched.
-                        Hidden files (starting with a dot) are skipped.
+                        Organization is generated from the backend proposal flow. Existing
+                        subfolders are preserved and hidden files are skipped.
                     </p>
                 </div>
             </div>

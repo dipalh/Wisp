@@ -1,14 +1,14 @@
-from pathlib import Path
-import shutil
-
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from services.organizer.batch_state import apply_batch, create_batch, has_batch, undo_batch
+import services.actions as action_store
+from services.actions.batch_executor import apply_batch as apply_action_batch
+from services.actions.batch_executor import undo_batch as undo_action_batch
+from services.actions.models import Action, ActionStatus, ActionType
 from services.organizer.models import DirectorySuggestions
 from services.organizer.proposal_state import accept as accept_proposal
+from services.organizer.proposal_state import batch_for
 from services.organizer.proposal_state import is_accepted
-from services.organizer.proposal_state import mappings_for
 from services.organizer.suggester import suggest_directories
 
 router = APIRouter()
@@ -84,9 +84,58 @@ async def accept_organize_proposal(proposal_id: str, payload: _AcceptRequest | N
     mappings = []
     if payload is not None:
         mappings = [m.model_dump() for m in payload.mappings]
-    accept_proposal(proposal_id, mappings=mappings)
-    batch_id = create_batch(proposal_id, mappings)
+    actions: list[Action] = []
+    for mapping in mappings:
+        src_path = mapping.get("original_path", "")
+        dst_path = mapping.get("suggested_path", "")
+        if not src_path or not dst_path:
+            continue
+        action = Action(
+            type=ActionType.MOVE,
+            label=f"Organize {src_path} -> {dst_path}",
+            targets=[src_path],
+            before_state={"path": src_path},
+            after_state={"path": dst_path},
+            proposal_id=proposal_id,
+            source="organizer",
+            actor="organizer",
+            status=ActionStatus.ACCEPTED,
+        )
+        action_store.add(action)
+        actions.append(action)
+
+    if actions:
+        batch = action_store.create_batch(
+            [action.id for action in actions],
+            proposal_id=proposal_id,
+            actor="organizer",
+        )
+        batch_id = batch["batch_id"]
+        for action in actions:
+            action.batch_id = batch_id
+            action_store.add(action)
+    else:
+        batch_id = f"noop_{proposal_id}"
+
+    accept_proposal(proposal_id, mappings=mappings, batch_id=batch_id)
     return {"ok": True, "proposal_id": proposal_id, "accepted": True, "batch_id": batch_id}
+
+
+def _raise_from_batch_failure(result: dict) -> None:
+    details = result.get("details") or []
+    failure = next((detail for detail in details if detail.get("status") == ActionStatus.FAILED.value), None)
+    if failure is None:
+        return
+    code = failure.get("code", "BATCH_APPLY_FAILED")
+    message = failure.get("message", "batch apply failed")
+    status_code = {
+        "ACTION_NOT_FOUND": 404,
+        "DESTINATION_COLLISION": 409,
+        "SOURCE_OUTSIDE_ROOT": 422,
+        "DESTINATION_OUTSIDE_ROOT": 422,
+        "DELETE_SOURCE_MISSING": 404,
+    }.get(code, 422)
+    raise HTTPException(status_code=status_code, detail={"code": code, "message": message})
 
 
 @router.post(
@@ -102,30 +151,22 @@ async def apply_organize_proposal(proposal_id: str):
                 "message": "Proposal must be accepted before apply",
             },
         )
-    for mapping in mappings_for(proposal_id):
-        dst_path = mapping.get("suggested_path", "")
-        if dst_path and Path(dst_path).exists():
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": "DESTINATION_COLLISION",
-                    "message": f"destination already exists: {dst_path}",
-                },
-            )
-    for mapping in mappings_for(proposal_id):
-        src_path = mapping.get("original_path", "")
-        dst_path = mapping.get("suggested_path", "")
-        if not src_path or not dst_path:
-            continue
-        src = Path(src_path)
-        dst = Path(dst_path)
-        if not src.exists():
-            raise HTTPException(
-                status_code=422,
-                detail={"code": "SOURCE_MISSING", "message": f"source missing: {src_path}"},
-            )
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(src), str(dst))
+    batch_id = batch_for(proposal_id)
+    if batch_id is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "BATCH_NOT_FOUND", "message": f"no batch recorded for proposal: {proposal_id}"},
+        )
+    if batch_id.startswith("noop_"):
+        return {"ok": True, "proposal_id": proposal_id, "applied": True}
+    result = apply_action_batch(batch_id)
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "BATCH_NOT_FOUND", "message": f"unknown batch_id: {batch_id}"},
+        )
+    if result["failed"]:
+        _raise_from_batch_failure(result)
     return {"ok": True, "proposal_id": proposal_id, "applied": True}
 
 
@@ -134,17 +175,20 @@ async def apply_organize_proposal(proposal_id: str):
     summary="Undo an applied organize proposal batch",
 )
 async def undo_organize_proposal(proposal_id: str):
-    for mapping in mappings_for(proposal_id):
-        original = mapping.get("original_path", "")
-        moved = mapping.get("suggested_path", "")
-        if not original or not moved:
-            continue
-        src = Path(moved)
-        dst = Path(original)
-        if not src.exists():
-            continue
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(src), str(dst))
+    batch_id = batch_for(proposal_id)
+    if batch_id is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "BATCH_NOT_FOUND", "message": f"no batch recorded for proposal: {proposal_id}"},
+        )
+    if batch_id.startswith("noop_"):
+        return {"ok": True, "proposal_id": proposal_id, "undone": True}
+    result = undo_action_batch(batch_id)
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "BATCH_NOT_FOUND", "message": f"unknown batch_id: {batch_id}"},
+        )
     return {"ok": True, "proposal_id": proposal_id, "undone": True}
 
 
@@ -153,18 +197,14 @@ async def undo_organize_proposal(proposal_id: str):
     summary="Apply an organize action batch",
 )
 async def apply_organize_batch(batch_id: str):
-    if not has_batch(batch_id):
+    result = apply_action_batch(batch_id)
+    if result is None:
         raise HTTPException(
             status_code=404,
             detail={"code": "BATCH_NOT_FOUND", "message": f"unknown batch_id: {batch_id}"},
         )
-    try:
-        apply_batch(batch_id)
-    except FileExistsError as exc:
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "DESTINATION_COLLISION", "message": f"destination already exists: {exc}"},
-        )
+    if result["failed"]:
+        _raise_from_batch_failure(result)
     return {"ok": True, "batch_id": batch_id, "applied": True}
 
 
@@ -173,10 +213,10 @@ async def apply_organize_batch(batch_id: str):
     summary="Undo an organize action batch",
 )
 async def undo_organize_batch(batch_id: str):
-    if not has_batch(batch_id):
+    result = undo_action_batch(batch_id)
+    if result is None:
         raise HTTPException(
             status_code=404,
             detail={"code": "BATCH_NOT_FOUND", "message": f"unknown batch_id: {batch_id}"},
         )
-    undo_batch(batch_id)
     return {"ok": True, "batch_id": batch_id, "undone": True}

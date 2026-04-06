@@ -99,10 +99,38 @@ interface UndoOrganizeResponse {
   };
 }
 
+interface OrganizeStrategy {
+  proposal_id: string;
+  name: string;
+  rationale: string;
+  reasons: string[];
+  citations: string[];
+  folder_tree: string[];
+  mappings: Array<{
+    original_path: string;
+    suggested_path: string;
+  }>;
+}
+
 interface WispApi {
   getUsername: () => string;
   pickFolder: () => Promise<string | null>;
   scanFolder: (folderPath: string) => Promise<TreeNode | null>;
+  organizeGetProposals: (payload: { rootPath: string; mockMode?: boolean; toolBudget?: number | null } | string) => Promise<{
+    ok: boolean;
+    recommendation: string;
+    degraded: boolean;
+    strategies: OrganizeStrategy[];
+  }>;
+  organizeAcceptProposal: (proposalId: string, mappings: OrganizeStrategy['mappings']) => Promise<{
+    ok: boolean;
+    proposal_id: string;
+    accepted: boolean;
+    batch_id: string;
+  }>;
+  organizeApplyBatch: (batchId: string) => Promise<{ ok: boolean; batch_id: string; applied: true }>;
+  organizeUndoBatch: (batchId: string) => Promise<{ ok: boolean; batch_id: string; undone: true }>;
+  /** @deprecated Transitional wrapper over the proposal-first organizer flow. */
   organizeFolder: (folderPath: string) => Promise<{ moved: number; skipped: number; error?: string; categories?: Record<string, number> }>;
   tagFiles: (payload: { rootPath: string; provider: 'local' | 'api' }) => Promise<TaggedFile[]>;
   suggestDelete: (folderPath: string) => Promise<DeleteSuggestion[]>;

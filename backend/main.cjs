@@ -99,6 +99,113 @@ async function safeReadDir(dirPath) {
   }
 }
 
+function isPathUnderRoot(targetPath, rootPath) {
+  const resolvedTarget = path.resolve(targetPath);
+  const resolvedRoot = path.resolve(rootPath);
+  return resolvedTarget === resolvedRoot || resolvedTarget.startsWith(`${resolvedRoot}${path.sep}`);
+}
+
+function resolveSuggestedPath(rootPath, suggestedPath) {
+  if (!suggestedPath) return suggestedPath;
+  if (path.isAbsolute(suggestedPath)) return suggestedPath;
+  return path.join(rootPath, ...suggestedPath.split('/'));
+}
+
+function categorySummaryFromMappings(mappings, rootPath) {
+  const categories = {};
+  for (const mapping of mappings) {
+    const relative = path.relative(rootPath, mapping.suggested_path || '');
+    const category = relative.split(path.sep)[0] || 'Others';
+    categories[category] = (categories[category] || 0) + 1;
+  }
+  return { moved: mappings.length, skipped: 0, categories };
+}
+
+function selectRecommendedStrategy(strategies, recommendation) {
+  if (!Array.isArray(strategies) || strategies.length === 0) return null;
+  const rec = String(recommendation || '').toLowerCase();
+  return strategies.find((strategy) => rec.includes(String(strategy.name || '').toLowerCase())) || strategies[0];
+}
+
+async function fetchOrganizeProposals(rootPath, options = {}) {
+  const resp = await fetch(`${apiUrl}/api/v1/organize/proposals`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      mock_mode: Boolean(options.mockMode),
+      tool_budget: options.toolBudget ?? null,
+    }),
+  });
+  if (!resp.ok) {
+    const detail = await resp.text().catch(() => '');
+    throw new Error(`Organize proposals failed (HTTP ${resp.status}): ${detail}`);
+  }
+
+  const body = await resp.json();
+  const strategies = (body.strategies || [])
+    .map((strategy, index) => {
+      const mappings = (strategy.mappings || [])
+        .filter((mapping) => mapping.original_path && isPathUnderRoot(mapping.original_path, rootPath))
+        .map((mapping) => ({
+          original_path: mapping.original_path,
+          suggested_path: resolveSuggestedPath(rootPath, mapping.suggested_path),
+        }));
+      if (mappings.length === 0) return null;
+      return {
+        proposal_id: `${path.basename(rootPath)}-${index + 1}`,
+        name: strategy.name,
+        rationale: strategy.rationale,
+        reasons: strategy.reasons || [],
+        citations: strategy.citations || [],
+        folder_tree: strategy.folder_tree || [],
+        mappings,
+      };
+    })
+    .filter(Boolean);
+
+  return {
+    ok: true,
+    recommendation: body.recommendation || '',
+    degraded: Boolean(body.degraded),
+    strategies,
+  };
+}
+
+async function acceptOrganizeProposal(proposalId, mappings) {
+  const resp = await fetch(`${apiUrl}/api/v1/organize/proposals/${encodeURIComponent(proposalId)}/accept`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mappings }),
+  });
+  if (!resp.ok) {
+    const detail = await resp.text().catch(() => '');
+    throw new Error(`Organize accept failed (HTTP ${resp.status}): ${detail}`);
+  }
+  return resp.json();
+}
+
+async function applyOrganizeBatch(batchId) {
+  const resp = await fetch(`${apiUrl}/api/v1/organize/batches/${encodeURIComponent(batchId)}/apply`, {
+    method: 'POST',
+  });
+  if (!resp.ok) {
+    const detail = await resp.text().catch(() => '');
+    throw new Error(`Organize apply failed (HTTP ${resp.status}): ${detail}`);
+  }
+  return resp.json();
+}
+
+async function undoOrganizeBatch(batchId) {
+  const resp = await fetch(`${apiUrl}/api/v1/organize/batches/${encodeURIComponent(batchId)}/undo`, {
+    method: 'POST',
+  });
+  if (!resp.ok) {
+    const detail = await resp.text().catch(() => '');
+    throw new Error(`Organize undo failed (HTTP ${resp.status}): ${detail}`);
+  }
+  return resp.json();
+}
+
 async function buildTreeNode(targetPath, depth = 0, fileCounter = { count: 0 }) {
   const stat = await fs.stat(targetPath);
   let size = 0;
@@ -420,55 +527,56 @@ ipcMain.handle('folder:scan', async (_, rootPath) => {
   return node;
 });
 
+ipcMain.handle('organize:getProposals', async (_, payload) => {
+  const rootPath = typeof payload === 'string' ? payload : payload?.rootPath;
+  if (!rootPath) throw new Error('rootPath is required');
+  return fetchOrganizeProposals(rootPath, typeof payload === 'object' ? payload : {});
+});
+
+ipcMain.handle('organize:acceptProposal', async (_, proposalId, mappings) => {
+  if (!proposalId) throw new Error('proposalId is required');
+  return acceptOrganizeProposal(proposalId, mappings || []);
+});
+
+ipcMain.handle('organize:applyBatch', async (_, batchId) => {
+  if (!batchId) throw new Error('batchId is required');
+  return applyOrganizeBatch(batchId);
+});
+
+ipcMain.handle('organize:undoBatch', async (_, batchId) => {
+  if (!batchId) throw new Error('batchId is required');
+  return undoOrganizeBatch(batchId);
+});
+
 ipcMain.handle('folder:organize', async (_, rootPath) => {
   try {
-    const entries = await fs.readdir(rootPath, { withFileTypes: true });
-    const files = entries.filter(e => e.isFile() && !e.name.startsWith('.'));
-
-    let moved = 0;
-    let skipped = 0;
-    const categories = {};
-    const moves = []; // Track every move for undo
-
-    for (const file of files) {
-      const category = detectCategory(file.name);
-      const destDir = path.join(rootPath, category);
-      const src = path.join(rootPath, file.name);
-      const dest = path.join(destDir, file.name);
-
-      if (src === dest) { skipped++; continue; }
-
-      try {
-        await fs.mkdir(destDir, { recursive: true });
-        await fs.rename(src, dest);
-        moves.push({ src, dest });
-        moved++;
-        categories[category] = (categories[category] || 0) + 1;
-      } catch (moveErr) {
-        console.warn(`[organize] could not move ${file.name}: ${moveErr.message}`);
-        skipped++;
-      }
+    const proposals = await fetchOrganizeProposals(rootPath, { mockMode: false });
+    const strategy = selectRecommendedStrategy(proposals.strategies, proposals.recommendation);
+    if (!strategy || strategy.mappings.length === 0) {
+      return { moved: 0, skipped: 0, categories: {} };
     }
 
-    // Record in undo stack so Cmd+Z can reverse this
-    if (moves.length > 0) {
+    const accept = await acceptOrganizeProposal(strategy.proposal_id, strategy.mappings);
+    await applyOrganizeBatch(accept.batch_id);
+    const summary = categorySummaryFromMappings(strategy.mappings, rootPath);
+
+    if (summary.moved > 0) {
       UNDO_STACK.push({
-        type: 'organize',
+        type: 'organize-batch',
         timestamp: Date.now(),
         rootPath,
-        moves,
-        categories: { ...categories },
+        batchId: accept.batch_id,
+        moved: summary.moved,
       });
       if (UNDO_STACK.length > MAX_UNDO_ENTRIES) UNDO_STACK.shift();
-      // Notify renderer that undo is now available
       for (const win of BrowserWindow.getAllWindows()) {
-        win.webContents.send('undo:available', { canUndo: true, label: `Undo organize (${moved} files)` });
+        win.webContents.send('undo:available', { canUndo: true, label: `Undo organize (${summary.moved} files)` });
       }
     }
 
     TREE_CACHE.delete(rootPath);
-    console.log(`[organize] done: ${moved} moved, ${skipped} skipped out of ${files.length} files`);
-    return { moved, skipped, categories };
+    console.log(`[organize] done via backend proposals: ${summary.moved} moved`);
+    return summary;
   } catch (err) {
     console.error('[organize] error:', err.message);
     return { moved: 0, skipped: 0, categories: {}, error: err.message };
@@ -480,7 +588,8 @@ ipcMain.handle('folder:organize', async (_, rootPath) => {
 ipcMain.handle('organize:canUndo', () => {
   if (UNDO_STACK.length === 0) return { canUndo: false, label: '' };
   const last = UNDO_STACK[UNDO_STACK.length - 1];
-  return { canUndo: true, label: `Undo organize (${last.moves.length} files)` };
+  const count = last.moved ?? last.moves?.length ?? 0;
+  return { canUndo: true, label: `Undo organize (${count} files)` };
 });
 
 ipcMain.handle('organize:undo', async () => {
@@ -492,36 +601,49 @@ ipcMain.handle('organize:undo', async () => {
   const reversed = [];
   const failed = [];
 
-  // Reverse moves in reverse order
-  for (let i = action.moves.length - 1; i >= 0; i--) {
-    const { src, dest } = action.moves[i];
+  if (action.type === 'organize-batch') {
     try {
-      // Move file back from dest → src
-      await fs.rename(dest, src);
-      reversed.push({ src: dest, dest: src, name: path.basename(src) });
-    } catch (err) {
-      console.warn(`[undo] could not reverse ${dest} → ${src}: ${err.message}`);
-      failed.push({ src: dest, dest: src, name: path.basename(src), error: err.message });
-    }
-  }
-
-  // Try to remove empty category directories that were created
-  const dirsToCheck = new Set(action.moves.map(m => path.dirname(m.dest)));
-  for (const dir of dirsToCheck) {
-    try {
-      const remaining = await fs.readdir(dir);
-      if (remaining.length === 0) {
-        await fs.rmdir(dir);
-        console.log(`[undo] removed empty directory: ${dir}`);
+      const result = await undoOrganizeBatch(action.batchId);
+      for (let i = 0; i < (result.undone ?? action.moved ?? 0); i += 1) {
+        reversed.push({ name: 'restored' });
       }
-    } catch { /* dir may not exist or not be empty, that's fine */ }
+      for (let i = 0; i < (result.failed ?? 0); i += 1) {
+        failed.push({ error: 'undo failed' });
+      }
+    } catch (err) {
+      failed.push({ error: err.message });
+    }
+  } else {
+    for (let i = action.moves.length - 1; i >= 0; i--) {
+      const { src, dest } = action.moves[i];
+      try {
+        await fs.rename(dest, src);
+        reversed.push({ src: dest, dest: src, name: path.basename(src) });
+      } catch (err) {
+        console.warn(`[undo] could not reverse ${dest} → ${src}: ${err.message}`);
+        failed.push({ src: dest, dest: src, name: path.basename(src), error: err.message });
+      }
+    }
+
+    const dirsToCheck = new Set(action.moves.map(m => path.dirname(m.dest)));
+    for (const dir of dirsToCheck) {
+      try {
+        const remaining = await fs.readdir(dir);
+        if (remaining.length === 0) {
+          await fs.rmdir(dir);
+          console.log(`[undo] removed empty directory: ${dir}`);
+        }
+      } catch { /* dir may not exist or not be empty, that's fine */ }
+    }
   }
 
   TREE_CACHE.delete(action.rootPath);
 
   // Notify renderer of updated undo state
   const canUndo = UNDO_STACK.length > 0;
-  const label = canUndo ? `Undo organize (${UNDO_STACK[UNDO_STACK.length - 1].moves.length} files)` : '';
+  const next = UNDO_STACK[UNDO_STACK.length - 1];
+  const nextCount = next ? (next.moved ?? next.moves?.length ?? 0) : 0;
+  const label = canUndo ? `Undo organize (${nextCount} files)` : '';
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send('undo:available', { canUndo, label });
   }

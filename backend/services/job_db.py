@@ -472,10 +472,7 @@ def reconcile_indexed_files(job_id: str, root_paths: list[str]) -> None:
                     error_code = state
                     error_message = "File is located in Wisp quarantine."
                 elif row["last_seen_job_id"] == job_id:
-                    if row["file_state"] in {
-                        FileState.PERMISSION_DENIED.value,
-                        FileState.LOCKED.value,
-                    }:
+                    if row["file_state"] != FileState.INDEXED.value:
                         state = row["file_state"]
                         error_code = row["error_code"] or state
                         error_message = row["error_message"] or state.replace("_", " ").title()
@@ -557,6 +554,36 @@ def get_indexed_state_map(file_ids: list[str]) -> dict[str, dict[str, str]]:
                 "file_state": row["file_state"],
                 "error_code": row["error_code"],
                 "error_message": row["error_message"],
+            }
+            for row in rows
+        }
+    finally:
+        conn.close()
+
+
+def get_indexed_metadata_map(file_ids: list[str]) -> dict[str, dict]:
+    """Return metadata fields keyed by file_id for API/UI payload enrichment."""
+    normalized = [fid for fid in dict.fromkeys(file_ids) if fid]
+    if not normalized:
+        return {}
+
+    placeholders = ",".join("?" for _ in normalized)
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            f"SELECT file_id, name, ext, depth, engine, is_deletable, tagged_os, updated_at "
+            f"FROM indexed_files WHERE file_id IN ({placeholders})",
+            tuple(normalized),
+        ).fetchall()
+        return {
+            row["file_id"]: {
+                "name": row["name"],
+                "ext": row["ext"],
+                "depth": row["depth"],
+                "engine": row["engine"],
+                "is_deletable": row["is_deletable"],
+                "tagged_os": row["tagged_os"],
+                "updated_at": row["updated_at"],
             }
             for row in rows
         }
