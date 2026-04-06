@@ -152,7 +152,7 @@ export default function OrganizeView({ hasRoot, onOrganize, onAddFolder, busy, r
                     ) : (
                         <>
                             <FolderSync size={16} />
-                            Organize Now
+                            Review Plan
                         </>
                     )}
                 </button>

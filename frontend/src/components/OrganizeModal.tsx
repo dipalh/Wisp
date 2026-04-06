@@ -1,10 +1,19 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
-    X, Loader2, CheckCircle2, XCircle, FolderSync, FileText, Image,
-    Music, Video, Archive, Code2, Package, Zap, FolderTree, ChevronRight,
+    CheckCircle2,
+    FileText,
+    FolderSync,
+    Image,
+    Info,
+    Loader2,
+    Music,
+    Package,
+    Video,
+    Archive,
+    Code2,
+    X,
+    XCircle,
 } from 'lucide-react';
-
-/* ── Types ───────────────────────────────────────────────────────────────── */
 
 type OrganizeResult = {
     moved: number;
@@ -12,80 +21,33 @@ type OrganizeResult = {
     categories: Record<string, number>;
 };
 
+type OrganizeStrategy = {
+    proposal_id: string;
+    name: string;
+    rationale: string;
+    reasons: string[];
+    citations: string[];
+    folder_tree: string[];
+    mappings: Array<{
+        original_path: string;
+        suggested_path: string;
+    }>;
+};
+
+type OrganizeProposalEnvelope = {
+    recommendation: string;
+    degraded: boolean;
+    strategies: OrganizeStrategy[];
+};
+
 type OrganizeModalProps = {
     open: boolean;
     folder: string;
     onClose: () => void;
     onError: (msg: string) => void;
-    onOrganize: () => Promise<OrganizeResult>;
+    onLoadProposals: () => Promise<OrganizeProposalEnvelope>;
+    onApplyStrategy: (strategy: OrganizeStrategy) => Promise<OrganizeResult>;
 };
-
-type Phase = 'running' | 'success' | 'failed';
-
-/* ── Stage definitions for the simulated pipeline ────────────────────────── */
-
-type Stage = {
-    label: string;
-    logs: string[];
-    duration: number;
-};
-
-const STAGES: Stage[] = [
-    {
-        label: 'Scanning directory',
-        logs: [
-            'Reading file manifest from target folder...',
-            'Enumerating top-level entries...',
-            'Filtering hidden files and existing subdirectories...',
-        ],
-        duration: 1200,
-    },
-    {
-        label: 'Analyzing file types',
-        logs: [
-            'Inspecting file extensions and MIME types...',
-            'Classifying documents, images, audio, video...',
-            'Identifying archives and source code files...',
-            'Building file-type frequency map...',
-        ],
-        duration: 1400,
-    },
-    {
-        label: 'Planning folder structure',
-        logs: [
-            'Generating optimal category folders...',
-            'Mapping each file to its target directory...',
-            'Resolving naming conflicts...',
-            'Validating proposed file moves...',
-        ],
-        duration: 1600,
-    },
-    {
-        label: 'Executing file moves',
-        logs: [
-            'Creating category subdirectories...',
-            'Moving documents to Documents/...',
-            'Moving images to Images/...',
-            'Moving audio files to Audio/...',
-            'Moving video files to Videos/...',
-            'Moving archives to Archives/...',
-            'Moving source code to Code/...',
-            'Moving remaining files to Others/...',
-        ],
-        duration: 2000,
-    },
-    {
-        label: 'Verifying results',
-        logs: [
-            'Confirming all files reached their destinations...',
-            'Checking for orphaned entries...',
-            'Generating summary report...',
-        ],
-        duration: 800,
-    },
-];
-
-const TOTAL_STAGE_WEIGHT = STAGES.length;
 
 const CATEGORY_ICONS: Record<string, typeof FileText> = {
     Documents: FileText,
@@ -97,200 +59,108 @@ const CATEGORY_ICONS: Record<string, typeof FileText> = {
     Others: Package,
 };
 
-/* ── Component ───────────────────────────────────────────────────────────── */
+type Phase = 'loading' | 'ready' | 'applying' | 'success' | 'error';
 
-export default function OrganizeModal({ open, folder, onClose, onError, onOrganize }: OrganizeModalProps) {
-    const [phase, setPhase] = useState<Phase>('running');
+function fileNameFromPath(targetPath: string): string {
+    return targetPath.split(/[\\/]/).pop() || targetPath;
+}
+
+export default function OrganizeModal({
+    open,
+    folder,
+    onClose,
+    onError,
+    onLoadProposals,
+    onApplyStrategy,
+}: OrganizeModalProps) {
+    const [phase, setPhase] = useState<Phase>('loading');
+    const [proposals, setProposals] = useState<OrganizeProposalEnvelope | null>(null);
+    const [selectedProposalId, setSelectedProposalId] = useState<string>('');
     const [result, setResult] = useState<OrganizeResult | null>(null);
-    const [elapsed, setElapsed] = useState(0);
     const [errorMsg, setErrorMsg] = useState('');
-    const [started, setStarted] = useState(false);
 
-    /* Simulated pipeline state */
-    const [stageIdx, setStageIdx] = useState(0);
-    const [logs, setLogs] = useState<string[]>([]);
-    const [pct, setPct] = useState(0);
-    const [currentMessage, setCurrentMessage] = useState('Preparing...');
-
-    const elapsedRef = useRef<ReturnType<typeof setInterval> | null>(null);
-    const stageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const logTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-    const pctTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-    const logsEndRef = useRef<HTMLDivElement>(null);
-    const realDoneRef = useRef(false);
-    const realResultRef = useRef<OrganizeResult | null>(null);
-    const realErrorRef = useRef<string | null>(null);
-
-    const cleanup = useCallback(() => {
-        if (elapsedRef.current) { clearInterval(elapsedRef.current); elapsedRef.current = null; }
-        if (stageTimerRef.current) { clearTimeout(stageTimerRef.current); stageTimerRef.current = null; }
-        if (logTimerRef.current) { clearInterval(logTimerRef.current); logTimerRef.current = null; }
-        if (pctTimerRef.current) { clearInterval(pctTimerRef.current); pctTimerRef.current = null; }
-    }, []);
-
-    useEffect(() => () => cleanup(), [cleanup]);
-
-    /* Auto-scroll logs */
     useEffect(() => {
-        logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [logs]);
+        if (!open || !folder) return;
 
-    /* ── Kick off on open ────────────────────────────────────────────────── */
-    useEffect(() => {
-        if (!open || started || !folder) return;
-        setStarted(true);
-        setPhase('running');
+        let cancelled = false;
+        setPhase('loading');
+        setProposals(null);
+        setSelectedProposalId('');
         setResult(null);
-        setElapsed(0);
-        setStageIdx(0);
-        setLogs(['Initializing organize pipeline...']);
-        setPct(0);
-        setCurrentMessage('Preparing...');
         setErrorMsg('');
-        realDoneRef.current = false;
-        realResultRef.current = null;
-        realErrorRef.current = null;
 
-        /* Elapsed timer */
-        const t0 = Date.now();
-        elapsedRef.current = setInterval(() => {
-            setElapsed(Math.round((Date.now() - t0) / 1000));
-        }, 1000);
-
-        /* Start the real work in the background */
         (async () => {
             try {
-                const res = await onOrganize();
-                realResultRef.current = res;
-            } catch (e: any) {
-                realErrorRef.current = e?.message ?? String(e);
+                const next = await onLoadProposals();
+                if (cancelled) return;
+                setProposals(next);
+                setSelectedProposalId(next.strategies[0]?.proposal_id ?? '');
+                setPhase('ready');
+            } catch (error: any) {
+                if (cancelled) return;
+                const message = error?.message ?? String(error);
+                setErrorMsg(message);
+                setPhase('error');
+                onError(`Organize failed: ${message}`);
             }
-            realDoneRef.current = true;
         })();
 
-        /* Start simulated pipeline */
-        runStage(0);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [open, started, folder]);
-
-    /* ── Run one stage ───────────────────────────────────────────────────── */
-    function runStage(idx: number) {
-        if (idx >= STAGES.length) {
-            waitForReal();
-            return;
-        }
-
-        const stage = STAGES[idx];
-        setStageIdx(idx);
-        setCurrentMessage(stage.label + '...');
-        setLogs(prev => [...prev, `[Stage ${idx + 1}/${STAGES.length}] ${stage.label}`]);
-
-        /* Drip-feed log lines */
-        let logIdx = 0;
-        const logInterval = Math.max(250, stage.duration / (stage.logs.length + 1));
-        if (logTimerRef.current) clearInterval(logTimerRef.current);
-        logTimerRef.current = setInterval(() => {
-            if (logIdx < stage.logs.length) {
-                setLogs(prev => {
-                    const next = [...prev, `  ${stage.logs[logIdx]}`];
-                    return next.length > 60 ? next.slice(-60) : next;
-                });
-                logIdx++;
-            }
-        }, logInterval);
-
-        /* Animate progress within this stage */
-        const basePct = Math.round((idx / TOTAL_STAGE_WEIGHT) * 100);
-        const nextPct = Math.round(((idx + 1) / TOTAL_STAGE_WEIGHT) * 100);
-        const pctRange = nextPct - basePct;
-        const pctSteps = 8;
-        let pctStep = 0;
-        const pctInterval = stage.duration / pctSteps;
-        if (pctTimerRef.current) clearInterval(pctTimerRef.current);
-        pctTimerRef.current = setInterval(() => {
-            pctStep++;
-            const eased = Math.min(pctStep / pctSteps, 1);
-            setPct(Math.round(basePct + pctRange * eased));
-            if (pctStep >= pctSteps && pctTimerRef.current) {
-                clearInterval(pctTimerRef.current);
-                pctTimerRef.current = null;
-            }
-        }, pctInterval);
-
-        /* Move to next stage after duration */
-        stageTimerRef.current = setTimeout(() => {
-            if (logTimerRef.current) { clearInterval(logTimerRef.current); logTimerRef.current = null; }
-            if (pctTimerRef.current) { clearInterval(pctTimerRef.current); pctTimerRef.current = null; }
-            setPct(nextPct);
-            runStage(idx + 1);
-        }, stage.duration);
-    }
-
-    /* ── Wait for real backend result ────────────────────────────────────── */
-    function waitForReal() {
-        setCurrentMessage('Finalizing...');
-        const check = () => {
-            if (realDoneRef.current) {
-                cleanup();
-                if (realErrorRef.current) {
-                    setErrorMsg(realErrorRef.current);
-                    setPhase('failed');
-                    onError(`Organize failed: ${realErrorRef.current}`);
-                } else {
-                    setPct(100);
-                    setLogs(prev => [...prev, '', 'Organization complete.']);
-                    setResult(realResultRef.current);
-                    setPhase('success');
-                }
-            } else {
-                stageTimerRef.current = setTimeout(check, 200);
-            }
+        return () => {
+            cancelled = true;
         };
-        check();
-    }
+    }, [folder, onError, onLoadProposals, open]);
 
-    /* ── Close handler ───────────────────────────────────────────────────── */
+    const selectedStrategy = useMemo(
+        () => proposals?.strategies.find((strategy) => strategy.proposal_id === selectedProposalId) ?? null,
+        [proposals, selectedProposalId],
+    );
+
     const handleClose = () => {
-        if (phase === 'running') return;
-        cleanup();
-        setStarted(false);
+        if (phase === 'applying') return;
         onClose();
+    };
+
+    const handleApply = async () => {
+        if (!selectedStrategy) return;
+        setPhase('applying');
+        try {
+            const next = await onApplyStrategy(selectedStrategy);
+            setResult(next);
+            setPhase('success');
+        } catch (error: any) {
+            const message = error?.message ?? String(error);
+            setErrorMsg(message);
+            setPhase('error');
+            onError(`Organize failed: ${message}`);
+        }
     };
 
     if (!open) return null;
 
-    const isDone = phase === 'success' || phase === 'failed';
-    const formatElapsed = (s: number) => {
-        const m = Math.floor(s / 60);
-        const sec = s % 60;
-        return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
-    };
-
-    const folderName = folder.split(/[\\/]/).pop() || folder;
-    const cats = result ? Object.entries(result.categories).sort((a, b) => b[1] - a[1]) : [];
+    const folderName = fileNameFromPath(folder);
+    const categories = Object.entries(result?.categories ?? {}).sort((a, b) => b[1] - a[1]);
 
     return (
-        <div className="modal-overlay" onClick={isDone ? handleClose : undefined}>
-            <div className="modal-content scan-modal organize-modal" onClick={e => e.stopPropagation()}>
-
-                {/* Header */}
+        <div className="modal-overlay" onClick={phase === 'applying' ? undefined : handleClose}>
+            <div className="modal-content scan-modal organize-modal" onClick={(event) => event.stopPropagation()}>
                 <div className="modal-header">
                     <h3 className="modal-title">
-                        {phase === 'success' && <CheckCircle2 size={20} className="modal-icon-success" />}
-                        {phase === 'failed' && <XCircle size={20} className="modal-icon-error" />}
-                        {phase === 'running' && <Loader2 size={20} className="spin" />}
-                        {phase === 'success' ? 'Organize Complete'
-                            : phase === 'failed' ? 'Organize Failed'
-                            : 'Organizing Files...'}
+                        {phase === 'loading' || phase === 'applying' ? <Loader2 size={20} className="spin" /> : null}
+                        {phase === 'success' ? <CheckCircle2 size={20} className="modal-icon-success" /> : null}
+                        {phase === 'error' ? <XCircle size={20} className="modal-icon-error" /> : null}
+                        {phase === 'loading' && 'Loading organization strategies'}
+                        {phase === 'ready' && 'Review Organization Plan'}
+                        {phase === 'applying' && 'Applying Organization Plan'}
+                        {phase === 'success' && 'Organization Applied Successfully'}
+                        {phase === 'error' && 'Organization Failed'}
                     </h3>
-                    {isDone && (
+                    {phase !== 'applying' && (
                         <button className="modal-close" onClick={handleClose}>
                             <X size={16} />
                         </button>
                     )}
                 </div>
 
-                {/* Stats row (mirrors ScanModal) */}
                 <div className="scan-modal-stats-row">
                     <div className="scan-modal-stat">
                         <FolderSync size={14} />
@@ -298,54 +168,83 @@ export default function OrganizeModal({ open, folder, onClose, onError, onOrgani
                         <span className="scan-modal-stat-label">Folder</span>
                     </div>
                     <div className="scan-modal-stat">
-                        <Zap size={14} />
-                        <span className="scan-modal-stat-value">{formatElapsed(elapsed)}</span>
-                        <span className="scan-modal-stat-label">Elapsed</span>
+                        <Info size={14} />
+                        <span className="scan-modal-stat-value">{proposals?.strategies.length ?? 0}</span>
+                        <span className="scan-modal-stat-label">Strategies</span>
                     </div>
                     <div className="scan-modal-stat">
-                        <FolderTree size={14} />
-                        <span className="scan-modal-stat-value">
-                            {isDone ? (result ? `${result.moved + result.skipped}` : '0') : `Stage ${stageIdx + 1}/${STAGES.length}`}
+                        <Package size={14} />
+                        <span className="scan-modal-stat-value">{selectedStrategy?.mappings.length ?? result?.moved ?? 0}</span>
+                        <span className="scan-modal-stat-label">
+                            {phase === 'success' ? 'Files moved' : 'Planned moves'}
                         </span>
-                        <span className="scan-modal-stat-label">{isDone ? 'Files' : 'Progress'}</span>
                     </div>
                 </div>
 
-                {/* Progress bar (determinate) */}
-                <div className="scan-modal-progress">
-                    <div className="scan-modal-bar-track">
-                        <div
-                            className={`scan-modal-bar-fill ${phase === 'failed' ? 'error' : ''} ${!isDone && pct > 0 ? 'animating' : ''}`}
-                            style={{ width: `${pct}%` }}
-                        />
+                {phase === 'loading' && (
+                    <div className="scan-modal-message">
+                        <span className="scan-modal-message-dot" />
+                        Loading organization strategies from the backend planner...
                     </div>
-                    <div className="scan-modal-stats">
-                        <span>{pct}% complete</span>
-                        <span>{STAGES[Math.min(stageIdx, STAGES.length - 1)]?.label ?? 'Done'}</span>
-                    </div>
-                </div>
+                )}
 
-                {/* Current operation message */}
-                <div className="scan-modal-message">
-                    <span className={`scan-modal-message-dot${isDone ? ' done' : ''}`} />
-                    {isDone ? (phase === 'success' ? 'All files organized successfully' : 'Organization failed') : currentMessage}
-                </div>
-
-                {/* Log output (same style as ScanModal) */}
-                <div className="scan-modal-logs">
-                    {logs.map((line, i) => (
-                        <div key={i} className={`scan-modal-log-line ${i === logs.length - 1 ? 'latest' : ''}`}>
-                            <span className="scan-modal-log-ts">{String(i + 1).padStart(3, ' ')}</span>
-                            {line}
+                {phase === 'ready' && proposals && (
+                    <div className="organize-modal-result">
+                        <div className="organize-info-box" style={{ marginTop: 0 }}>
+                            <Info size={14} />
+                            <p>{proposals.recommendation || 'Review the available organization strategies below.'}</p>
                         </div>
-                    ))}
-                    <div ref={logsEndRef} />
-                </div>
 
-                {/* Success — result panel with folder tree + stats */}
+                        {proposals.degraded && (
+                            <div className="organize-info-box" style={{ marginTop: 12 }}>
+                                <Info size={14} />
+                                <p>Planner is running in degraded mode. Strategies are still reviewable, but they may be less contextual.</p>
+                            </div>
+                        )}
+
+                        {proposals.strategies.length === 0 ? (
+                            <div className="organize-modal-note">No organization strategies were generated for this folder.</div>
+                        ) : (
+                            <div className="organize-cats-grid" role="radiogroup" aria-label="Organization strategies">
+                                {proposals.strategies.map((strategy) => {
+                                    const checked = strategy.proposal_id === selectedProposalId;
+                                    return (
+                                        <label
+                                            key={strategy.proposal_id}
+                                            className="organize-cat-card"
+                                            aria-label={strategy.name}
+                                        >
+                                            <input
+                                                type="radio"
+                                                name="organize-strategy"
+                                                aria-label={strategy.name}
+                                                checked={checked}
+                                                onChange={() => setSelectedProposalId(strategy.proposal_id)}
+                                            />
+                                            <div className="organize-cat-card-info">
+                                                <span className="organize-cat-card-name">{strategy.name}</span>
+                                                <span className="organize-cat-card-count">{strategy.mappings.length} file move{strategy.mappings.length === 1 ? '' : 's'}</span>
+                                                <p>{strategy.rationale}</p>
+                                                <p>{strategy.reasons.join(' • ')}</p>
+                                                <p>{strategy.citations.map(fileNameFromPath).join(', ')}</p>
+                                            </div>
+                                        </label>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {phase === 'applying' && selectedStrategy && (
+                    <div className="scan-modal-message">
+                        <span className="scan-modal-message-dot" />
+                        Applying “{selectedStrategy.name}” through the backend action engine...
+                    </div>
+                )}
+
                 {phase === 'success' && result && (
                     <div className="organize-modal-result">
-                        {/* Stats */}
                         <div className="organize-modal-stats">
                             <div className="organize-modal-stat">
                                 <span className="organize-modal-stat-value">{result.moved}</span>
@@ -356,64 +255,58 @@ export default function OrganizeModal({ open, folder, onClose, onError, onOrgani
                                 <span className="organize-modal-stat-label">Skipped</span>
                             </div>
                             <div className="organize-modal-stat">
-                                <span className="organize-modal-stat-value">{cats.length}</span>
+                                <span className="organize-modal-stat-value">{categories.length}</span>
                                 <span className="organize-modal-stat-label">Categories</span>
                             </div>
                         </div>
 
-                        {/* Resulting folder tree */}
-                        {cats.length > 0 && (
+                        <p>{result.moved} file moved with the selected reviewed strategy.</p>
+
+                        {categories.length > 0 && (
                             <div className="organize-modal-tree">
-                                <p className="organize-modal-tree-title">Resulting folder structure</p>
+                                <p className="organize-modal-tree-title">Applied category summary</p>
                                 <div className="organize-modal-tree-content">
-                                    {cats.map(([cat, count]) => {
-                                        const Icon = CATEGORY_ICONS[cat] ?? Package;
+                                    {categories.map(([category, count]) => {
+                                        const Icon = CATEGORY_ICONS[category] ?? Package;
                                         return (
-                                            <div className="organize-modal-tree-row" key={cat}>
-                                                <ChevronRight size={11} className="organize-modal-tree-chevron" />
+                                            <div className="organize-modal-tree-row" key={category}>
                                                 <Icon size={13} className="organize-modal-tree-icon" />
-                                                <span className="organize-modal-tree-name">{cat}/</span>
-                                                <span className="organize-modal-tree-count">{count} file{count !== 1 ? 's' : ''}</span>
+                                                <span className="organize-modal-tree-name">{category}</span>
+                                                <span className="organize-modal-tree-count">{count}</span>
                                             </div>
                                         );
                                     })}
                                 </div>
                             </div>
                         )}
-
-                        {result.moved === 0 && (
-                            <p className="organize-modal-note">All files were already sorted — nothing to move.</p>
-                        )}
                     </div>
                 )}
 
-                {/* Error */}
-                {phase === 'failed' && (
+                {phase === 'error' && (
                     <div className="organize-modal-error">
                         <XCircle size={36} />
                         <p>{errorMsg || 'An unexpected error occurred.'}</p>
                     </div>
                 )}
 
-                {/* Footer */}
                 <div className="scan-modal-footer">
-                    {isDone ? (
+                    {phase === 'ready' ? (
                         <>
-                            {phase === 'success' && (
-                                <span className="scan-modal-footer-summary">
-                                    {result && result.moved > 0
-                                        ? `Organized ${result.moved} files into ${cats.length} folders in ${formatElapsed(elapsed)}`
-                                        : `Completed in ${formatElapsed(elapsed)}`}
-                                </span>
-                            )}
-                            <button className="btn btn-primary" onClick={handleClose}>
-                                {phase === 'success' ? 'Done' : 'Close'}
+                            <span className="scan-modal-footer-summary">
+                                Review the recommended strategy before any files are moved.
+                            </span>
+                            <button
+                                className="btn btn-primary"
+                                onClick={handleApply}
+                                disabled={!selectedStrategy}
+                            >
+                                Apply Selected Plan
                             </button>
                         </>
                     ) : (
-                        <span className="scan-modal-footer-hint">
-                            AI agent is analyzing and organizing your files...
-                        </span>
+                        <button className="btn btn-primary" onClick={handleClose} disabled={phase === 'applying'}>
+                            {phase === 'success' ? 'Done' : 'Close'}
+                        </button>
                     )}
                 </div>
             </div>

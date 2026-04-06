@@ -169,7 +169,7 @@ export default function ContextPanel({
                                         </div>
                                     </>
                                 ) : (
-                                    <div className="panel-empty-hint"><FolderSync size={14} /><span>Press Organize Now to sort your files.</span></div>
+                                    <div className="panel-empty-hint"><FolderSync size={14} /><span>Review an organization plan to reorganize your files safely.</span></div>
                                 )}
                             </div>
                         )}

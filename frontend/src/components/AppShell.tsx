@@ -49,6 +49,19 @@ export type DeleteSuggestion = {
     score: number;
 };
 
+type OrganizeStrategy = {
+    proposal_id: string;
+    name: string;
+    rationale: string;
+    reasons: string[];
+    citations: string[];
+    folder_tree: string[];
+    mappings: Array<{
+        original_path: string;
+        suggested_path: string;
+    }>;
+};
+
 export type PipelineStatus = {
     indexed: number;
     previewed: number;
@@ -122,6 +135,7 @@ export default function AppShell() {
     const [undoLabel, setUndoLabel] = useState('');
     const [undoState, setUndoState] = useState<'idle' | 'undoing' | 'done' | 'error'>('idle');
     const [undoResultMsg, setUndoResultMsg] = useState('');
+    const [lastOrganizeBatchId, setLastOrganizeBatchId] = useState<string | null>(null);
 
     // Activity log
     const [activityLog, setActivityLog] = useState<ActivityEntry[]>([]);
@@ -140,19 +154,33 @@ export default function AppShell() {
     const performUndo = useCallback(async () => {
         setUndoState('undoing');
         try {
-            const res = await (window as any).wispApi.undoOrganize();
-            if (!res.ok) {
-                setUndoState('error');
-                setUndoResultMsg(res.error || 'Nothing to undo');
-                return;
+            if (lastOrganizeBatchId) {
+                const res = await (window as any).wispApi.organizeUndoBatch(lastOrganizeBatchId);
+                if (!res.ok) {
+                    setUndoState('error');
+                    setUndoResultMsg('Nothing to undo');
+                    return;
+                }
+                setUndoState('done');
+                setUndoResultMsg('Restored the last applied organization batch');
+                setOrganizeResult(null);
+                setLastOrganizeBatchId(null);
+                logActivity('Undo organize', 'Restored last organization batch');
+            } else {
+                const res = await (window as any).wispApi.undoOrganize();
+                if (!res.ok) {
+                    setUndoState('error');
+                    setUndoResultMsg(res.error || 'Nothing to undo');
+                    return;
+                }
+                setUndoState('done');
+                setUndoResultMsg(
+                    `Restored ${res.reversed} file${res.reversed !== 1 ? 's' : ''} to original location${res.reversed !== 1 ? 's' : ''}`
+                    + (res.failed > 0 ? ` (${res.failed} failed)` : '')
+                );
+                setOrganizeResult(null);
+                logActivity('Undo organize', `${res.reversed} files restored`);
             }
-            setUndoState('done');
-            setUndoResultMsg(
-                `Restored ${res.reversed} file${res.reversed !== 1 ? 's' : ''} to original location${res.reversed !== 1 ? 's' : ''}`
-                + (res.failed > 0 ? ` (${res.failed} failed)` : '')
-            );
-            setOrganizeResult(null);
-            logActivity('Undo organize', `${res.reversed} files restored`);
             // Refresh tree
             if (rootFolders[0]) {
                 try {
@@ -165,7 +193,7 @@ export default function AppShell() {
             setUndoState('error');
             setUndoResultMsg(e?.message ?? 'Undo failed');
         }
-    }, [rootFolders, logActivity]);
+    }, [lastOrganizeBatchId, rootFolders, logActivity]);
 
     // ── Listen for Cmd+Z trigger and undo availability from main process ──
     useEffect(() => {
@@ -336,26 +364,50 @@ export default function AppShell() {
         }
     };
 
-    /** Called by OrganizeModal — runs the actual work and returns the result. */
-    const runOrganize = async () => {
+    const summarizeOrganizeMappings = useCallback((strategy: OrganizeStrategy) => {
+        const rootPath = rootFolders[0] ?? '';
+        const categories: Record<string, number> = {};
+        for (const mapping of strategy.mappings) {
+            const relative = rootPath && mapping.suggested_path.startsWith(rootPath)
+                ? mapping.suggested_path.slice(rootPath.length).replace(/^[/\\]+/, '')
+                : mapping.suggested_path;
+            const category = relative.split(/[\\/]/)[0] || 'Others';
+            categories[category] = (categories[category] || 0) + 1;
+        }
+        return {
+            moved: strategy.mappings.length,
+            skipped: 0,
+            categories,
+        };
+    }, [rootFolders]);
+
+    const loadOrganizeProposals = useCallback(async () => {
         if (rootFolders.length === 0) throw new Error('No folder selected');
-        const result = await window.wispApi.organizeFolder(rootFolders[0]);
-        if (result.error) throw new Error(result.error);
-        const res = { moved: result.moved, skipped: result.skipped, categories: result.categories ?? {} };
+        return window.wispApi.organizeGetProposals({ rootPath: rootFolders[0] });
+    }, [rootFolders]);
+
+    const applyOrganizeStrategy = useCallback(async (strategy: OrganizeStrategy) => {
+        const accept = await window.wispApi.organizeAcceptProposal(strategy.proposal_id, strategy.mappings);
+        await window.wispApi.organizeApplyBatch(accept.batch_id);
+        const res = summarizeOrganizeMappings(strategy);
         setOrganizeResult(res);
+        setLastOrganizeBatchId(accept.batch_id);
+        setUndoLabel(`Undo organize (${res.moved} files)`);
+        setUndoState('idle');
+        setUndoToastVisible(true);
         // background post-processing
         setTimeout(async () => {
             try {
                 if (rootFolders[0]) await handleScan(rootFolders[0]);
             } catch { /* ignore */ }
             const msg = res.moved > 0
-                ? `Organized ${res.moved} files into category folders`
+                ? `Applied organization plan to ${res.moved} files`
                 : 'No files needed organizing';
             setStatusText(msg);
-            logActivity('Folder organized', `${res.moved} moved, ${res.skipped} skipped`);
+            logActivity('Folder organized', `${strategy.name}: ${res.moved} moved`);
         }, 0);
         return res;
-    };
+    }, [handleScan, logActivity, rootFolders, summarizeOrganizeMappings]);
 
     const handleTagFiles = async (provider: 'local' | 'api') => {
         if (rootFolders.length === 0) return;
@@ -500,7 +552,8 @@ export default function AppShell() {
                 folder={rootFolders[0] ?? ''}
                 onClose={() => setOrganizeModalOpen(false)}
                 onError={onError}
-                onOrganize={runOrganize}
+                onLoadProposals={loadOrganizeProposals}
+                onApplyStrategy={applyOrganizeStrategy}
             />
 
             <UndoToast

@@ -1,25 +1,35 @@
 from __future__ import annotations
 
-import uuid
 from pathlib import Path
+
+import services.actions as action_store
+from services.actions.batch_executor import apply_batch as apply_action_batch
+from services.actions.batch_executor import undo_batch as undo_action_batch
+from services.actions.models import Action, ActionStatus, ActionType
+from services.embedding import pipeline
 
 
 class OrganizerToolRouter:
     def __init__(self) -> None:
-        self._batches: dict[str, dict] = {}
+        pass
 
     def semantic_search(self, query: str, *, limit: int = 5) -> list[dict]:
         if not query.strip():
             raise ValueError("query must be non-empty")
         if limit <= 0:
             raise ValueError("limit must be positive")
+        hits = pipeline.search(query, k=limit)
         return [
             {
-                "path": "/mock/result.txt",
-                "score": 0.95,
-                "snippet": f"match for {query}",
+                "path": hit.file_path,
+                "score": hit.score,
+                "snippet": hit.text[:200],
+                "file_id": hit.file_id,
+                "ext": hit.ext,
+                "depth": hit.depth,
             }
-        ][:limit]
+            for hit in hits[:limit]
+        ]
 
     def get_preview(self, path: str, *, max_chars: int = 200) -> dict:
         if not path.strip():
@@ -81,22 +91,43 @@ class OrganizerToolRouter:
     def create_action_batch(self, proposals: list[dict]) -> dict:
         if not proposals:
             raise ValueError("proposals must be non-empty")
-        batch_id = uuid.uuid4().hex[:12]
-        self._batches[batch_id] = {"proposals": proposals, "applied": False}
-        return {"batch_id": batch_id, "count": len(proposals)}
+        action_ids: list[str] = []
+        for proposal in proposals:
+            src = proposal.get("source") or (proposal.get("targets") or [""])[0]
+            dst = proposal.get("destination") or proposal.get("suggested_path") or ""
+            if not src or not dst:
+                continue
+            action = Action(
+                type=ActionType.MOVE,
+                label=f"Organize {src} -> {dst}",
+                targets=[src],
+                before_state={"path": src},
+                after_state={"path": dst},
+                status=ActionStatus.ACCEPTED,
+                actor="organizer",
+                source="tool_router",
+            )
+            action_store.add(action)
+            action_ids.append(action.id)
+        if not action_ids:
+            raise ValueError("proposals must contain actionable source/destination paths")
+        batch = action_store.create_batch(action_ids, actor="organizer")
+        for action_id in action_ids:
+            action = action_store.get(action_id)
+            if action is None:
+                continue
+            action.batch_id = batch["batch_id"]
+            action_store.add(action)
+        return {"batch_id": batch["batch_id"], "count": len(action_ids)}
 
     def apply_action_batch(self, batch_id: str) -> dict:
-        batch = self._batches.get(batch_id)
-        if batch is None:
+        result = apply_action_batch(batch_id)
+        if result is None:
             raise ValueError("unknown batch_id")
-        batch["applied"] = True
         return {"batch_id": batch_id, "applied": True}
 
     def undo_action_batch(self, batch_id: str) -> dict:
-        batch = self._batches.get(batch_id)
-        if batch is None:
+        result = undo_action_batch(batch_id)
+        if result is None:
             raise ValueError("unknown batch_id")
-        if not batch.get("applied", False):
-            return {"batch_id": batch_id, "undone": True}
-        batch["applied"] = False
         return {"batch_id": batch_id, "undone": True}
