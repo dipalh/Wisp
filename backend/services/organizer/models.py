@@ -56,5 +56,7 @@ class PlannerDecision(BaseModel):
     folder_path: str | None = None
     path: str | None = None
     query: str | None = None
+    recursive: bool = False
+    max_depth: int = 2
     limit: int = 3
     max_chars: int = 200

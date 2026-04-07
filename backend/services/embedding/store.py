@@ -282,7 +282,11 @@ def list_files() -> list[dict]:
         return []
     df = _get_table().to_pandas()
     cards = df[df["chunk_index"] == -1]
-    records = cards[["file_id", "file_path", "ext", "text", "tags"]].to_dict("records")
+    available = set(cards.columns)
+    selected = ["file_id", "file_path", "ext", "text"]
+    if "tags" in available:
+        selected.append("tags")
+    records = cards[selected].to_dict("records")
     # Deserialise JSON tags
     for r in records:
         try:

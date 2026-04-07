@@ -287,7 +287,7 @@ def test_organize_planner_requests_tools_before_finalizing(monkeypatch):
     calls: list[tuple[str, str]] = []
 
     class FakeRouter:
-        def get_folder_manifest(self, folder_path: str):
+        def get_folder_manifest(self, folder_path: str, *, recursive: bool = False, max_depth: int = 2):
             calls.append(("get_folder_manifest", folder_path))
             return [{"name": "report.txt", "path": "/workspace/root/docs/report.txt", "ext": ".txt"}]
 
@@ -339,7 +339,7 @@ def test_organize_planner_requests_tools_before_finalizing(monkeypatch):
             }
         )
 
-    monkeypatch.setattr("services.organizer.suggester.OrganizerToolRouter", lambda: FakeRouter())
+    monkeypatch.setattr("services.organizer.suggester.OrganizerToolRouter", lambda **kwargs: FakeRouter())
     monkeypatch.setattr("services.organizer.suggester.generate_structured", fake_generate_structured)
 
     result = asyncio.run(suggest_directories(tool_budget=3))
@@ -364,7 +364,7 @@ def test_organize_planner_budget_exhaustion_after_tool_calls_returns_degraded(mo
     monkeypatch.setattr("services.organizer.suggester.store.list_files", lambda: fixture_files)
 
     class FakeRouter:
-        def get_folder_manifest(self, folder_path: str):
+        def get_folder_manifest(self, folder_path: str, *, recursive: bool = False, max_depth: int = 2):
             return [{"name": "report.txt", "path": "/workspace/root/docs/report.txt", "ext": ".txt"}]
 
     async def fake_generate_structured(prompt, schema, system=None):
@@ -378,7 +378,7 @@ def test_organize_planner_budget_exhaustion_after_tool_calls_returns_degraded(mo
             )
         raise AssertionError("Final suggestions should not be generated when budget is exhausted")
 
-    monkeypatch.setattr("services.organizer.suggester.OrganizerToolRouter", lambda: FakeRouter())
+    monkeypatch.setattr("services.organizer.suggester.OrganizerToolRouter", lambda **kwargs: FakeRouter())
     monkeypatch.setattr("services.organizer.suggester.generate_structured", fake_generate_structured)
 
     result = asyncio.run(suggest_directories(tool_budget=1))
@@ -400,7 +400,7 @@ def test_organize_planner_retries_after_malformed_tool_request(monkeypatch):
     calls: list[tuple[str, str]] = []
 
     class FakeRouter:
-        def get_folder_manifest(self, folder_path: str):
+        def get_folder_manifest(self, folder_path: str, *, recursive: bool = False, max_depth: int = 2):
             calls.append(("get_folder_manifest", folder_path))
             return [{"name": "report.txt", "path": "/workspace/root/docs/report.txt", "ext": ".txt"}]
 
@@ -447,7 +447,7 @@ def test_organize_planner_retries_after_malformed_tool_request(monkeypatch):
             }
         )
 
-    monkeypatch.setattr("services.organizer.suggester.OrganizerToolRouter", lambda: FakeRouter())
+    monkeypatch.setattr("services.organizer.suggester.OrganizerToolRouter", lambda **kwargs: FakeRouter())
     monkeypatch.setattr("services.organizer.suggester.generate_structured", fake_generate_structured)
 
     result = asyncio.run(suggest_directories(tool_budget=3))

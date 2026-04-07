@@ -14,6 +14,7 @@ deterministic review-safe strategy instead of failing closed.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import os
 
@@ -62,6 +63,7 @@ Available actions:
 Rules:
 - Request only one action at a time.
 - Prefer inspecting folder structure first, then representative files.
+- Use recursive folder manifests when the structure appears nested.
 - Use finalize when you have enough evidence to produce safe, reviewable strategies.
 - Keep queries concise and targeted.
 """
@@ -238,7 +240,7 @@ def _summarize_observation(action: str, payload: object) -> str:
         preview = payload
     else:
         preview = str(payload)
-    return f"{action}: {preview}"
+    return json.dumps({"tool": action, "result": preview}, ensure_ascii=True, sort_keys=True)
 
 
 def _execute_planner_action(
@@ -252,7 +254,11 @@ def _execute_planner_action(
             raise ValueError("Planner requested get_folder_manifest without a folder path")
         return _summarize_observation(
             decision.action,
-            router.get_folder_manifest(folder_path),
+            router.get_folder_manifest(
+                folder_path,
+                recursive=decision.recursive,
+                max_depth=decision.max_depth,
+            ),
         )
 
     if decision.action == "get_preview":
@@ -307,8 +313,8 @@ async def suggest_directories(
     if mock_mode:
         return _mock_suggestions(files)
 
-    router = OrganizerToolRouter()
     planning_root = _infer_planning_root(files)
+    router = OrganizerToolRouter(root_path=planning_root or None)
     remaining_steps = tool_budget if tool_budget is not None else 2
     tool_observations: list[str] = []
 
