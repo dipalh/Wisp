@@ -88,17 +88,6 @@ interface TranscribeResponse {
   duration_seconds: number;
 }
 
-interface UndoOrganizeResponse {
-  ok: boolean;
-  reversed: number;
-  failed: number;
-  error?: string;
-  details: {
-    reversed: string[];
-    failed: string[];
-  };
-}
-
 interface OrganizeStrategy {
   proposal_id: string;
   name: string;
@@ -128,10 +117,40 @@ interface WispApi {
     accepted: boolean;
     batch_id: string;
   }>;
-  organizeApplyBatch: (batchId: string) => Promise<{ ok: boolean; batch_id: string; applied: true }>;
-  organizeUndoBatch: (batchId: string) => Promise<{ ok: boolean; batch_id: string; undone: true }>;
-  /** @deprecated Transitional wrapper over the proposal-first organizer flow. */
-  organizeFolder: (folderPath: string) => Promise<{ moved: number; skipped: number; error?: string; categories?: Record<string, number> }>;
+  organizeApplyBatch: (batchId: string) => Promise<{
+    ok: boolean;
+    batch_id: string;
+    status: string;
+    applied: number;
+    failed: number;
+    partial: boolean;
+    details: Array<{
+      action_id: string;
+      status: string;
+      source_path?: string;
+      destination_path?: string;
+      code?: string;
+      message?: string;
+    }>;
+  }>;
+  organizeUndoBatch: (batchId: string) => Promise<{
+    ok: boolean;
+    batch_id: string;
+    status: string;
+    undone: number;
+    failed: number;
+    partial: boolean;
+    details: Array<{
+      action_id: string;
+      status: string;
+      source_path?: string;
+      destination_path?: string;
+      code?: string;
+      message?: string;
+    }>;
+  }>;
+  organizeRegisterUndoBatch: (payload: { batchId: string; label: string }) => Promise<{ ok: boolean }>;
+  organizeClearUndoBatch: () => Promise<{ ok: boolean }>;
   tagFiles: (payload: { rootPath: string; provider: 'local' | 'api' }) => Promise<TaggedFile[]>;
   suggestDelete: (folderPath: string) => Promise<DeleteSuggestion[]>;
   trashPath: (targetPath: string) => Promise<{ ok: boolean }>;
@@ -170,8 +189,6 @@ interface WispApi {
   openFile: (filePath: string) => Promise<{ ok: boolean }>;
   searchMemory: (query: string, opts?: { k?: number; ext?: string }) => Promise<SearchResponse>;
   askAssistant: (query: string, k?: number, autoDeepen?: boolean) => Promise<AssistantResponse>;
-  undoOrganize: () => Promise<UndoOrganizeResponse>;
-  canUndoOrganize: () => Promise<{ canUndo: boolean }>;
   onUndoTriggered: (callback: () => void) => () => void;
   onUndoAvailable: (callback: (data: { canUndo: boolean; label: string }) => void) => () => void;
 }

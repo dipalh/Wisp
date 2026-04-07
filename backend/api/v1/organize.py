@@ -138,6 +138,38 @@ def _raise_from_batch_failure(result: dict) -> None:
     raise HTTPException(status_code=status_code, detail={"code": code, "message": message})
 
 
+def _apply_response_payload(result: dict, *, batch_id: str, proposal_id: str | None = None) -> dict:
+    payload = {
+        "ok": True,
+        "batch_id": batch_id,
+        "status": result["status"],
+        "applied": result["applied"],
+        "failed": result["failed"],
+        "partial": result["status"] == ActionStatus.PARTIAL.value,
+        "details": result["details"],
+    }
+    if proposal_id is not None:
+        payload["proposal_id"] = proposal_id
+        payload["applied_result"] = True
+    return payload
+
+
+def _undo_response_payload(result: dict, *, batch_id: str, proposal_id: str | None = None) -> dict:
+    payload = {
+        "ok": True,
+        "batch_id": batch_id,
+        "status": result["status"],
+        "undone": result["undone"],
+        "failed": result["failed"],
+        "partial": result["status"] == ActionStatus.PARTIAL.value,
+        "details": result["details"],
+    }
+    if proposal_id is not None:
+        payload["proposal_id"] = proposal_id
+        payload["undone_result"] = True
+    return payload
+
+
 @router.post(
     "/proposals/{proposal_id}/apply",
     summary="Apply an accepted organize proposal",
@@ -165,9 +197,9 @@ async def apply_organize_proposal(proposal_id: str):
             status_code=404,
             detail={"code": "BATCH_NOT_FOUND", "message": f"unknown batch_id: {batch_id}"},
         )
-    if result["failed"]:
+    if result["failed"] and result["applied"] == 0:
         _raise_from_batch_failure(result)
-    return {"ok": True, "proposal_id": proposal_id, "applied": True}
+    return _apply_response_payload(result, batch_id=batch_id, proposal_id=proposal_id)
 
 
 @router.post(
@@ -189,7 +221,7 @@ async def undo_organize_proposal(proposal_id: str):
             status_code=404,
             detail={"code": "BATCH_NOT_FOUND", "message": f"unknown batch_id: {batch_id}"},
         )
-    return {"ok": True, "proposal_id": proposal_id, "undone": True}
+    return _undo_response_payload(result, batch_id=batch_id, proposal_id=proposal_id)
 
 
 @router.post(
@@ -203,9 +235,9 @@ async def apply_organize_batch(batch_id: str):
             status_code=404,
             detail={"code": "BATCH_NOT_FOUND", "message": f"unknown batch_id: {batch_id}"},
         )
-    if result["failed"]:
+    if result["failed"] and result["applied"] == 0:
         _raise_from_batch_failure(result)
-    return {"ok": True, "batch_id": batch_id, "applied": True}
+    return _apply_response_payload(result, batch_id=batch_id)
 
 
 @router.post(
@@ -219,4 +251,4 @@ async def undo_organize_batch(batch_id: str):
             status_code=404,
             detail={"code": "BATCH_NOT_FOUND", "message": f"unknown batch_id: {batch_id}"},
         )
-    return {"ok": True, "batch_id": batch_id, "undone": True}
+    return _undo_response_payload(result, batch_id=batch_id)

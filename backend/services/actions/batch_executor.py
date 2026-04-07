@@ -38,9 +38,19 @@ def apply_batch(batch_id: str) -> dict | None:
     last_error: str | None = None
 
     for action_id in batch["action_ids"]:
+        action = action_store.get(action_id)
+        source_path = action.before_state.get("path") if action is not None else None
+        destination_path = action.after_state.get("path") if action is not None else None
         try:
             execute_action(action_id)
-            details.append({"action_id": action_id, "status": ActionStatus.APPLIED.value})
+            details.append(
+                {
+                    "action_id": action_id,
+                    "status": ActionStatus.APPLIED.value,
+                    "source_path": source_path,
+                    "destination_path": destination_path,
+                }
+            )
             applied += 1
         except ExecutionError as exc:
             existing = action_store.get(action_id)
@@ -54,6 +64,8 @@ def apply_batch(batch_id: str) -> dict | None:
                 {
                     "action_id": action_id,
                     "status": ActionStatus.FAILED.value,
+                    "source_path": source_path,
+                    "destination_path": destination_path,
                     "code": exc.code,
                     "message": str(exc),
                 }
@@ -104,7 +116,14 @@ def undo_batch(batch_id: str) -> dict | None:
             last_error = f"Action not found: {action_id}"
             continue
         if action.status == ActionStatus.UNDONE:
-            details.append({"action_id": action_id, "status": ActionStatus.UNDONE.value})
+            details.append(
+                {
+                    "action_id": action_id,
+                    "status": ActionStatus.UNDONE.value,
+                    "source_path": action.before_state.get("path"),
+                    "destination_path": action.after_state.get("path"),
+                }
+            )
             undone += 1
             continue
         if action.status != ActionStatus.APPLIED:
@@ -112,6 +131,8 @@ def undo_batch(batch_id: str) -> dict | None:
                 {
                     "action_id": action_id,
                     "status": ActionStatus.FAILED.value,
+                    "source_path": action.before_state.get("path"),
+                    "destination_path": action.after_state.get("path"),
                     "code": "ACTION_NOT_APPLIED",
                     "message": f"Action {action_id} is {action.status.value}, expected APPLIED",
                 }
@@ -127,6 +148,8 @@ def undo_batch(batch_id: str) -> dict | None:
                 {
                     "action_id": action_id,
                     "status": ActionStatus.FAILED.value,
+                    "source_path": action.before_state.get("path"),
+                    "destination_path": action.after_state.get("path"),
                     "code": code,
                     "message": error,
                 }
@@ -136,7 +159,14 @@ def undo_batch(batch_id: str) -> dict | None:
             continue
 
         action_store.set_status(action_id, ActionStatus.UNDONE)
-        details.append({"action_id": action_id, "status": ActionStatus.UNDONE.value})
+        details.append(
+            {
+                "action_id": action_id,
+                "status": ActionStatus.UNDONE.value,
+                "source_path": action.before_state.get("path"),
+                "destination_path": action.after_state.get("path"),
+            }
+        )
         undone += 1
 
     if undone and failed:

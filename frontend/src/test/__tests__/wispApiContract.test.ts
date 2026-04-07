@@ -16,10 +16,21 @@ describe('wispApi contract', () => {
     expect(REQUIRED_WISP_API_METHODS).toContain('organizeAcceptProposal');
     expect(REQUIRED_WISP_API_METHODS).toContain('organizeApplyBatch');
     expect(REQUIRED_WISP_API_METHODS).toContain('organizeUndoBatch');
+    expect(REQUIRED_WISP_API_METHODS).toContain('organizeRegisterUndoBatch');
+    expect(REQUIRED_WISP_API_METHODS).toContain('organizeClearUndoBatch');
   });
 
   it('deprecates deterministic organizeFolder from required IPC contract', () => {
     expect(REQUIRED_WISP_API_METHODS).not.toContain('organizeFolder');
+  });
+
+  it('deprecates legacy undoOrganize compatibility methods from the IPC contract', () => {
+    expect(REQUIRED_WISP_API_METHODS).not.toContain('undoOrganize');
+    expect(REQUIRED_WISP_API_METHODS).not.toContain('canUndoOrganize');
+  });
+
+  it('does not expose deprecated organizeFolder on the shared test stub', () => {
+    expect('organizeFolder' in window.wispApi).toBe(false);
   });
 
   it('fails loudly and deterministically when a required method is missing', () => {

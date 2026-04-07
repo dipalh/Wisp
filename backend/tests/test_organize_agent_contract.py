@@ -235,7 +235,13 @@ def test_organize_undo_batch_restores_previous_paths(tmp_path):
 
     undo = client.post(f"/organize/proposals/{proposal_id}/undo")
     assert undo.status_code == 200
-    assert undo.json() == {"ok": True, "proposal_id": proposal_id, "undone": True}
+    undo_body = undo.json()
+    assert undo_body["ok"] is True
+    assert undo_body["proposal_id"] == proposal_id
+    assert undo_body["status"] == "UNDONE"
+    assert undo_body["undone"] == 1
+    assert undo_body["failed"] == 0
+    assert undo_body["partial"] is False
     assert src.exists()
     assert not dst.exists()
 
@@ -266,3 +272,221 @@ def test_organize_ollama_unavailable_falls_back_to_deterministic_mock_strategy(m
     assert degraded.proposals == deterministic.proposals
     assert "degraded" in degraded.recommendation.lower()
     assert "ollama" in degraded.recommendation.lower()
+
+
+def test_organize_planner_requests_tools_before_finalizing(monkeypatch):
+    fixture_files = [
+        {
+            "file_path": "/workspace/root/docs/report.txt",
+            "ext": ".txt",
+            "text": "Quarterly report with roadmap notes",
+        },
+    ]
+    monkeypatch.setattr("services.organizer.suggester.store.list_files", lambda: fixture_files)
+
+    calls: list[tuple[str, str]] = []
+
+    class FakeRouter:
+        def get_folder_manifest(self, folder_path: str):
+            calls.append(("get_folder_manifest", folder_path))
+            return [{"name": "report.txt", "path": "/workspace/root/docs/report.txt", "ext": ".txt"}]
+
+        def get_preview(self, path: str, *, max_chars: int = 200):
+            calls.append(("get_preview", path))
+            return {"path": path, "preview": "Quarterly report with roadmap notes"}
+
+    planner_turns = iter([
+        {
+            "action": "get_folder_manifest",
+            "folder_path": "/workspace/root",
+            "rationale": "Inspect the current folder layout before planning.",
+        },
+        {
+            "action": "get_preview",
+            "path": "/workspace/root/docs/report.txt",
+            "rationale": "Read one representative file before finalizing.",
+        },
+        {
+            "action": "finalize",
+            "rationale": "Enough context gathered to produce strategies.",
+        },
+    ])
+
+    final_prompt: dict[str, str] = {}
+
+    async def fake_generate_structured(prompt, schema, system=None):
+        if schema.__name__ == "PlannerDecision":
+            return schema.model_validate(next(planner_turns))
+        final_prompt["value"] = prompt
+        return schema.model_validate(
+            {
+                "proposals": [
+                    {
+                        "name": "By Project",
+                        "rationale": "Organize around project workstreams.",
+                        "reasons": ["Project context is explicit"],
+                        "citations": ["/workspace/root/docs/report.txt"],
+                        "folder_tree": ["Projects/Q1/"],
+                        "mappings": [
+                            {
+                                "original_path": "/workspace/root/docs/report.txt",
+                                "suggested_path": "Projects/Q1/report.txt",
+                            }
+                        ],
+                    }
+                ],
+                "recommendation": "Use By Project for clearer context.",
+            }
+        )
+
+    monkeypatch.setattr("services.organizer.suggester.OrganizerToolRouter", lambda: FakeRouter())
+    monkeypatch.setattr("services.organizer.suggester.generate_structured", fake_generate_structured)
+
+    result = asyncio.run(suggest_directories(tool_budget=3))
+
+    assert result.proposals[0].name == "By Project"
+    assert calls == [
+        ("get_folder_manifest", "/workspace/root"),
+        ("get_preview", "/workspace/root/docs/report.txt"),
+    ]
+    assert "TOOL OBSERVATIONS" in final_prompt["value"]
+    assert "Quarterly report with roadmap notes" in final_prompt["value"]
+
+
+def test_organize_planner_budget_exhaustion_after_tool_calls_returns_degraded(monkeypatch):
+    fixture_files = [
+        {
+            "file_path": "/workspace/root/docs/report.txt",
+            "ext": ".txt",
+            "text": "Quarterly report",
+        }
+    ]
+    monkeypatch.setattr("services.organizer.suggester.store.list_files", lambda: fixture_files)
+
+    class FakeRouter:
+        def get_folder_manifest(self, folder_path: str):
+            return [{"name": "report.txt", "path": "/workspace/root/docs/report.txt", "ext": ".txt"}]
+
+    async def fake_generate_structured(prompt, schema, system=None):
+        if schema.__name__ == "PlannerDecision":
+            return schema.model_validate(
+                {
+                    "action": "get_folder_manifest",
+                    "folder_path": "/workspace/root",
+                    "rationale": "Need more context.",
+                }
+            )
+        raise AssertionError("Final suggestions should not be generated when budget is exhausted")
+
+    monkeypatch.setattr("services.organizer.suggester.OrganizerToolRouter", lambda: FakeRouter())
+    monkeypatch.setattr("services.organizer.suggester.generate_structured", fake_generate_structured)
+
+    result = asyncio.run(suggest_directories(tool_budget=1))
+
+    assert result.proposals == []
+    assert "budget exhausted" in result.recommendation.lower()
+
+
+def test_organize_planner_retries_after_malformed_tool_request(monkeypatch):
+    fixture_files = [
+        {
+            "file_path": "/workspace/root/docs/report.txt",
+            "ext": ".txt",
+            "text": "Quarterly report with roadmap notes",
+        },
+    ]
+    monkeypatch.setattr("services.organizer.suggester.store.list_files", lambda: fixture_files)
+
+    calls: list[tuple[str, str]] = []
+
+    class FakeRouter:
+        def get_folder_manifest(self, folder_path: str):
+            calls.append(("get_folder_manifest", folder_path))
+            return [{"name": "report.txt", "path": "/workspace/root/docs/report.txt", "ext": ".txt"}]
+
+    planner_turns = iter([
+        {
+            "action": "get_preview",
+            "rationale": "Need to inspect a representative file first.",
+        },
+        {
+            "action": "get_folder_manifest",
+            "folder_path": "/workspace/root",
+            "rationale": "Recover by checking folder layout instead.",
+        },
+        {
+            "action": "finalize",
+            "rationale": "Enough context gathered to produce strategies.",
+        },
+    ])
+
+    prompts: list[str] = []
+
+    async def fake_generate_structured(prompt, schema, system=None):
+        prompts.append(prompt)
+        if schema.__name__ == "PlannerDecision":
+            return schema.model_validate(next(planner_turns))
+        return schema.model_validate(
+            {
+                "proposals": [
+                    {
+                        "name": "By Project",
+                        "rationale": "Organize around project workstreams.",
+                        "reasons": ["Project context is explicit"],
+                        "citations": ["/workspace/root/docs/report.txt"],
+                        "folder_tree": ["Projects/Q1/"],
+                        "mappings": [
+                            {
+                                "original_path": "/workspace/root/docs/report.txt",
+                                "suggested_path": "Projects/Q1/report.txt",
+                            }
+                        ],
+                    }
+                ],
+                "recommendation": "Use By Project for clearer context.",
+            }
+        )
+
+    monkeypatch.setattr("services.organizer.suggester.OrganizerToolRouter", lambda: FakeRouter())
+    monkeypatch.setattr("services.organizer.suggester.generate_structured", fake_generate_structured)
+
+    result = asyncio.run(suggest_directories(tool_budget=3))
+
+    assert result.proposals[0].name == "By Project"
+    assert calls == [("get_folder_manifest", "/workspace/root")]
+    assert any("invalid planner tool request" in prompt.lower() for prompt in prompts)
+
+
+def test_organize_planner_repeated_malformed_tool_requests_degrade_deterministically(monkeypatch):
+    fixture_files = [
+        {
+            "file_path": "/workspace/root/docs/report.txt",
+            "ext": ".txt",
+            "text": "Quarterly report",
+        },
+        {
+            "file_path": "/workspace/root/media/photo.png",
+            "ext": ".png",
+            "text": "Trip photo",
+        },
+    ]
+    monkeypatch.setattr("services.organizer.suggester.store.list_files", lambda: fixture_files)
+
+    async def fake_generate_structured(prompt, schema, system=None):
+        if schema.__name__ == "PlannerDecision":
+            return schema.model_validate(
+                {
+                    "action": "get_preview",
+                    "rationale": "Need a file preview.",
+                }
+            )
+        raise AssertionError("Final suggestions should not be generated after repeated malformed tool requests")
+
+    monkeypatch.setattr("services.organizer.suggester.generate_structured", fake_generate_structured)
+
+    degraded = asyncio.run(suggest_directories(tool_budget=2))
+    deterministic = asyncio.run(suggest_directories(mock_mode=True))
+
+    assert degraded.proposals == deterministic.proposals
+    assert "degraded" in degraded.recommendation.lower()
+    assert "invalid planner tool request" in degraded.recommendation.lower()

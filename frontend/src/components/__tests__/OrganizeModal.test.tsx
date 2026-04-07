@@ -72,7 +72,10 @@ describe('OrganizeModal', () => {
         const onApplyStrategy = vi.fn().mockResolvedValue({
             moved: 1,
             skipped: 0,
+            failed: 0,
+            partial: false,
             categories: { Projects: 1 },
+            warnings: [],
         });
 
         render(
@@ -104,5 +107,42 @@ describe('OrganizeModal', () => {
 
         expect(screen.getByText(/1 file moved/i)).toBeInTheDocument();
         expect(screen.getByText(/Projects/i)).toBeInTheDocument();
+    });
+
+    it('surfaces partial apply results with warnings instead of claiming full success', async () => {
+        const onApplyStrategy = vi.fn().mockResolvedValue({
+            moved: 1,
+            skipped: 0,
+            failed: 1,
+            partial: true,
+            categories: { Projects: 1 },
+            warnings: ['collision.txt: destination already exists'],
+        });
+
+        render(
+            <OrganizeModal
+                open
+                folder="/Users/test/root"
+                onClose={() => {}}
+                onError={() => {}}
+                onLoadProposals={vi.fn().mockResolvedValue(baseProposals)}
+                onApplyStrategy={onApplyStrategy}
+            />,
+        );
+
+        await waitFor(() => {
+            expect(screen.getByText('Project Buckets')).toBeInTheDocument();
+        });
+
+        const user = userEvent.setup();
+        await user.click(screen.getByRole('button', { name: /apply selected plan/i }));
+
+        await waitFor(() => {
+            expect(screen.getByText(/organization applied with warnings/i)).toBeInTheDocument();
+        });
+
+        expect(screen.getByText(/1 file moved/i)).toBeInTheDocument();
+        expect(screen.getByText(/1 failed/i)).toBeInTheDocument();
+        expect(screen.getByText(/destination already exists/i)).toBeInTheDocument();
     });
 });

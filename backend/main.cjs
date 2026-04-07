@@ -19,10 +19,10 @@ const MAX_SCAN_FILES = 600;
 const MAX_TREE_DEPTH = 8;
 const MAX_WALK_DEPTH = 10;
 
-// ── Undo stack for bulk file operations ────────────────────────────────────────
-// Each entry: { type: 'organize', timestamp, rootPath, moves: [{ src, dest }] }
-const UNDO_STACK = [];
-const MAX_UNDO_ENTRIES = 20;
+const ORGANIZE_UNDO_STATE = {
+  batchId: null,
+  label: '',
+};
 
 const PRIORITY_KEYWORDS = {
   high: ['important', 'urgent', 'critical', 'priority', 'asap', 'now'],
@@ -109,22 +109,6 @@ function resolveSuggestedPath(rootPath, suggestedPath) {
   if (!suggestedPath) return suggestedPath;
   if (path.isAbsolute(suggestedPath)) return suggestedPath;
   return path.join(rootPath, ...suggestedPath.split('/'));
-}
-
-function categorySummaryFromMappings(mappings, rootPath) {
-  const categories = {};
-  for (const mapping of mappings) {
-    const relative = path.relative(rootPath, mapping.suggested_path || '');
-    const category = relative.split(path.sep)[0] || 'Others';
-    categories[category] = (categories[category] || 0) + 1;
-  }
-  return { moved: mappings.length, skipped: 0, categories };
-}
-
-function selectRecommendedStrategy(strategies, recommendation) {
-  if (!Array.isArray(strategies) || strategies.length === 0) return null;
-  const rec = String(recommendation || '').toLowerCase();
-  return strategies.find((strategy) => rec.includes(String(strategy.name || '').toLowerCase())) || strategies[0];
 }
 
 async function fetchOrganizeProposals(rootPath, options = {}) {
@@ -548,114 +532,27 @@ ipcMain.handle('organize:undoBatch', async (_, batchId) => {
   return undoOrganizeBatch(batchId);
 });
 
-ipcMain.handle('folder:organize', async (_, rootPath) => {
-  try {
-    const proposals = await fetchOrganizeProposals(rootPath, { mockMode: false });
-    const strategy = selectRecommendedStrategy(proposals.strategies, proposals.recommendation);
-    if (!strategy || strategy.mappings.length === 0) {
-      return { moved: 0, skipped: 0, categories: {} };
-    }
-
-    const accept = await acceptOrganizeProposal(strategy.proposal_id, strategy.mappings);
-    await applyOrganizeBatch(accept.batch_id);
-    const summary = categorySummaryFromMappings(strategy.mappings, rootPath);
-
-    if (summary.moved > 0) {
-      UNDO_STACK.push({
-        type: 'organize-batch',
-        timestamp: Date.now(),
-        rootPath,
-        batchId: accept.batch_id,
-        moved: summary.moved,
-      });
-      if (UNDO_STACK.length > MAX_UNDO_ENTRIES) UNDO_STACK.shift();
-      for (const win of BrowserWindow.getAllWindows()) {
-        win.webContents.send('undo:available', { canUndo: true, label: `Undo organize (${summary.moved} files)` });
-      }
-    }
-
-    TREE_CACHE.delete(rootPath);
-    console.log(`[organize] done via backend proposals: ${summary.moved} moved`);
-    return summary;
-  } catch (err) {
-    console.error('[organize] error:', err.message);
-    return { moved: 0, skipped: 0, categories: {}, error: err.message };
+ipcMain.handle('organize:registerUndoBatch', async (_, payload) => {
+  const batchId = payload?.batchId;
+  if (!batchId) throw new Error('batchId is required');
+  ORGANIZE_UNDO_STATE.batchId = batchId;
+  ORGANIZE_UNDO_STATE.label = payload?.label || 'Undo organize';
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send('undo:available', { canUndo: true, label: ORGANIZE_UNDO_STATE.label });
   }
-})
+  return { ok: true };
+});
+
+ipcMain.handle('organize:clearUndoBatch', async () => {
+  ORGANIZE_UNDO_STATE.batchId = null;
+  ORGANIZE_UNDO_STATE.label = '';
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send('undo:available', { canUndo: false, label: '' });
+  }
+  return { ok: true };
+});
 
 // ── Undo handlers ──────────────────────────────────────────────────────────────
-
-ipcMain.handle('organize:canUndo', () => {
-  if (UNDO_STACK.length === 0) return { canUndo: false, label: '' };
-  const last = UNDO_STACK[UNDO_STACK.length - 1];
-  const count = last.moved ?? last.moves?.length ?? 0;
-  return { canUndo: true, label: `Undo organize (${count} files)` };
-});
-
-ipcMain.handle('organize:undo', async () => {
-  if (UNDO_STACK.length === 0) {
-    return { ok: false, error: 'Nothing to undo' };
-  }
-
-  const action = UNDO_STACK.pop();
-  const reversed = [];
-  const failed = [];
-
-  if (action.type === 'organize-batch') {
-    try {
-      const result = await undoOrganizeBatch(action.batchId);
-      for (let i = 0; i < (result.undone ?? action.moved ?? 0); i += 1) {
-        reversed.push({ name: 'restored' });
-      }
-      for (let i = 0; i < (result.failed ?? 0); i += 1) {
-        failed.push({ error: 'undo failed' });
-      }
-    } catch (err) {
-      failed.push({ error: err.message });
-    }
-  } else {
-    for (let i = action.moves.length - 1; i >= 0; i--) {
-      const { src, dest } = action.moves[i];
-      try {
-        await fs.rename(dest, src);
-        reversed.push({ src: dest, dest: src, name: path.basename(src) });
-      } catch (err) {
-        console.warn(`[undo] could not reverse ${dest} → ${src}: ${err.message}`);
-        failed.push({ src: dest, dest: src, name: path.basename(src), error: err.message });
-      }
-    }
-
-    const dirsToCheck = new Set(action.moves.map(m => path.dirname(m.dest)));
-    for (const dir of dirsToCheck) {
-      try {
-        const remaining = await fs.readdir(dir);
-        if (remaining.length === 0) {
-          await fs.rmdir(dir);
-          console.log(`[undo] removed empty directory: ${dir}`);
-        }
-      } catch { /* dir may not exist or not be empty, that's fine */ }
-    }
-  }
-
-  TREE_CACHE.delete(action.rootPath);
-
-  // Notify renderer of updated undo state
-  const canUndo = UNDO_STACK.length > 0;
-  const next = UNDO_STACK[UNDO_STACK.length - 1];
-  const nextCount = next ? (next.moved ?? next.moves?.length ?? 0) : 0;
-  const label = canUndo ? `Undo organize (${nextCount} files)` : '';
-  for (const win of BrowserWindow.getAllWindows()) {
-    win.webContents.send('undo:available', { canUndo, label });
-  }
-
-  console.log(`[undo] reversed ${reversed.length} moves, ${failed.length} failed`);
-  return {
-    ok: true,
-    reversed: reversed.length,
-    failed: failed.length,
-    details: { reversed, failed },
-  };
-});
 
 ipcMain.handle('files:tag', async (_, payload) => {
   const { rootPath, provider } = payload;
@@ -871,7 +768,7 @@ app.whenReady().then(() => {
         accelerator: 'CmdOrCtrl+Z',
         click: async () => {
           // First try our undo stack (for organize operations)
-          if (UNDO_STACK.length > 0) {
+          if (ORGANIZE_UNDO_STATE.batchId) {
             const win = BrowserWindow.getFocusedWindow();
             if (win) win.webContents.send('undo:trigger');
             return;

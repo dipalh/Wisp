@@ -6,6 +6,8 @@ export const REQUIRED_WISP_API_METHODS = [
     'organizeAcceptProposal',
     'organizeApplyBatch',
     'organizeUndoBatch',
+    'organizeRegisterUndoBatch',
+    'organizeClearUndoBatch',
     'tagFiles',
     'suggestDelete',
     'trashPath',
@@ -24,8 +26,6 @@ export const REQUIRED_WISP_API_METHODS = [
     'getIndexedFiles',
     'openFile',
     'searchMemory',
-    'undoOrganize',
-    'canUndoOrganize',
     'onUndoTriggered',
     'onUndoAvailable',
 ] as const;

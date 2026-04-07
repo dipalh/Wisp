@@ -4,6 +4,8 @@ Pydantic schemas for the directory suggestion output.
 These models are passed directly to Gemini's response_schema (structured output),
 so all field descriptions act as instructions to the model.
 """
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -40,3 +42,19 @@ class DirectorySuggestions(BaseModel):
     recommendation: str = Field(
         description="Which proposal is recommended and why, in 1-2 sentences"
     )
+
+
+class PlannerDecision(BaseModel):
+    action: Literal[
+        "get_folder_manifest",
+        "get_preview",
+        "get_file_metadata",
+        "semantic_search",
+        "finalize",
+    ]
+    rationale: str = Field(description="Why this next planner step is needed.")
+    folder_path: str | None = None
+    path: str | None = None
+    query: str | None = None
+    limit: int = 3
+    max_chars: int = 200

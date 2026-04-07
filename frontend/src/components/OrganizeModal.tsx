@@ -14,12 +14,7 @@ import {
     X,
     XCircle,
 } from 'lucide-react';
-
-type OrganizeResult = {
-    moved: number;
-    skipped: number;
-    categories: Record<string, number>;
-};
+import type { OrganizeResult } from './organizeOutcome';
 
 type OrganizeStrategy = {
     proposal_id: string;
@@ -151,7 +146,7 @@ export default function OrganizeModal({
                         {phase === 'loading' && 'Loading organization strategies'}
                         {phase === 'ready' && 'Review Organization Plan'}
                         {phase === 'applying' && 'Applying Organization Plan'}
-                        {phase === 'success' && 'Organization Applied Successfully'}
+                        {phase === 'success' && (result?.partial ? 'Organization Applied With Warnings' : 'Organization Applied Successfully')}
                         {phase === 'error' && 'Organization Failed'}
                     </h3>
                     {phase !== 'applying' && (
@@ -176,7 +171,7 @@ export default function OrganizeModal({
                         <Package size={14} />
                         <span className="scan-modal-stat-value">{selectedStrategy?.mappings.length ?? result?.moved ?? 0}</span>
                         <span className="scan-modal-stat-label">
-                            {phase === 'success' ? 'Files moved' : 'Planned moves'}
+                            {phase === 'success' ? (result?.partial ? 'Files moved' : 'Files moved') : 'Planned moves'}
                         </span>
                     </div>
                 </div>
@@ -255,12 +250,30 @@ export default function OrganizeModal({
                                 <span className="organize-modal-stat-label">Skipped</span>
                             </div>
                             <div className="organize-modal-stat">
-                                <span className="organize-modal-stat-value">{categories.length}</span>
-                                <span className="organize-modal-stat-label">Categories</span>
+                                <span className="organize-modal-stat-value">{result.failed}</span>
+                                <span className="organize-modal-stat-label">Failed</span>
                             </div>
                         </div>
 
-                        <p>{result.moved} file moved with the selected reviewed strategy.</p>
+                        {result.partial ? (
+                            <p>{result.moved} file moved and {result.failed} failed during apply.</p>
+                        ) : (
+                            <p>{result.moved} file moved with the selected reviewed strategy.</p>
+                        )}
+
+                        {result.warnings.length > 0 && (
+                            <div className="organize-info-box" style={{ marginTop: 12 }}>
+                                <Info size={14} />
+                                <div>
+                                    <p>Some actions could not be completed.</p>
+                                    <ul>
+                                        {result.warnings.map((warning) => (
+                                            <li key={warning}>{warning}</li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            </div>
+                        )}
 
                         {categories.length > 0 && (
                             <div className="organize-modal-tree">

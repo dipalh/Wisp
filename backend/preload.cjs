@@ -8,7 +8,8 @@ contextBridge.exposeInMainWorld('wispApi', {
   organizeAcceptProposal: (proposalId, mappings) => ipcRenderer.invoke('organize:acceptProposal', proposalId, mappings),
   organizeApplyBatch: (batchId) => ipcRenderer.invoke('organize:applyBatch', batchId),
   organizeUndoBatch: (batchId) => ipcRenderer.invoke('organize:undoBatch', batchId),
-  organizeFolder: (folderPath) => ipcRenderer.invoke('folder:organize', folderPath),
+  organizeRegisterUndoBatch: (payload) => ipcRenderer.invoke('organize:registerUndoBatch', payload),
+  organizeClearUndoBatch: () => ipcRenderer.invoke('organize:clearUndoBatch'),
   tagFiles: (payload) => ipcRenderer.invoke('files:tag', payload),
   suggestDelete: (folderPath) => ipcRenderer.invoke('files:suggestDelete', folderPath),
   trashPath: (targetPath) => ipcRenderer.invoke('files:trash', targetPath),
@@ -29,8 +30,6 @@ contextBridge.exposeInMainWorld('wispApi', {
   searchMemory: (query, opts) => ipcRenderer.invoke('memory:search', query, opts),
 
   // ── Undo support ──────────────────────────────────────────────────────
-  undoOrganize:    ()         => ipcRenderer.invoke('organize:undo'),
-  canUndoOrganize: ()         => ipcRenderer.invoke('organize:canUndo'),
   /** Register a callback for when Cmd+Z / Edit > Undo is pressed and our undo stack has entries */
   onUndoTriggered: (callback) => {
     const handler = () => callback();
