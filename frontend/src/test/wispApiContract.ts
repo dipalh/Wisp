@@ -1,6 +1,7 @@
 export const REQUIRED_WISP_API_METHODS = [
     'getUsername',
     'pickFolder',
+    'syncRoots',
     'scanFolder',
     'organizeGetProposals',
     'organizeAcceptProposal',

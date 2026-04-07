@@ -104,6 +104,7 @@ interface OrganizeStrategy {
 interface WispApi {
   getUsername: () => string;
   pickFolder: () => Promise<string | null>;
+  syncRoots: (roots: string[]) => Promise<{ ok: boolean; roots: string[] }>;
   scanFolder: (folderPath: string) => Promise<TreeNode | null>;
   organizeGetProposals: (payload: { rootPath: string; mockMode?: boolean; toolBudget?: number | null } | string) => Promise<{
     ok: boolean;

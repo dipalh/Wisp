@@ -209,6 +209,22 @@ export default function AppShell() {
         };
     }, [performUndo]);
 
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                await window.wispApi.syncRoots(rootFolders);
+            } catch (e: any) {
+                if (!cancelled) {
+                    onError(`Root sync failed: ${e?.message ?? e}`);
+                }
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [rootFolders, onError]);
+
     // File count from tree
     const fileCount = (() => {
         if (!tree) return 0;

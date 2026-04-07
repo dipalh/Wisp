@@ -12,6 +12,7 @@ afterEach(() => {
 window.wispApi = {
     getUsername: () => 'test-user',
     pickFolder: () => Promise.resolve(null),
+    syncRoots: () => Promise.resolve({ ok: true, roots: [] }),
     scanFolder: () => Promise.resolve(null),
     organizeGetProposals: () => Promise.resolve({ strategies: [], recommendation: '', degraded: false }),
     organizeAcceptProposal: () => Promise.resolve({ ok: true, proposal_id: 'stub', accepted: true }),

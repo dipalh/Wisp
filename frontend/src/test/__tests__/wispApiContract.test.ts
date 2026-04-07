@@ -20,6 +20,10 @@ describe('wispApi contract', () => {
     expect(REQUIRED_WISP_API_METHODS).toContain('organizeClearUndoBatch');
   });
 
+  it('requires explicit root synchronization for backend-scoped flows', () => {
+    expect(REQUIRED_WISP_API_METHODS).toContain('syncRoots');
+  });
+
   it('deprecates deterministic organizeFolder from required IPC contract', () => {
     expect(REQUIRED_WISP_API_METHODS).not.toContain('organizeFolder');
   });

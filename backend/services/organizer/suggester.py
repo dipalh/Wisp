@@ -288,8 +288,17 @@ def _execute_planner_action(
 async def suggest_directories(
     mock_mode: bool = False,
     tool_budget: int | None = None,
+    root_path: str | None = None,
 ) -> DirectorySuggestions:
     files = store.list_files()
+    if root_path:
+        requested_root = Path(root_path).resolve()
+        files = [
+            item
+            for item in files
+            if item.get("file_path")
+            and Path(item["file_path"]).resolve().is_relative_to(requested_root)
+        ]
 
     if not files:
         return DirectorySuggestions(
@@ -313,7 +322,7 @@ async def suggest_directories(
     if mock_mode:
         return _mock_suggestions(files)
 
-    planning_root = _infer_planning_root(files)
+    planning_root = root_path or _infer_planning_root(files)
     router = OrganizerToolRouter(root_path=planning_root or None)
     remaining_steps = tool_budget if tool_budget is not None else 2
     tool_observations: list[str] = []

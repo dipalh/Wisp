@@ -64,6 +64,28 @@ def test_post_organize_proposals_returns_strategy_envelope():
     assert body["recommendation"] == "Use By Project for clearer context."
 
 
+def test_post_organize_proposals_forwards_root_path_to_suggester():
+    client = _client()
+    mocked = DirectorySuggestions.model_validate(
+        {
+            "proposals": [],
+            "recommendation": "Nothing to do.",
+        }
+    )
+    with patch("api.v1.organize.suggest_directories", new=AsyncMock(return_value=mocked)) as mocked_suggester:
+        resp = client.post(
+            "/organize/proposals",
+            json={"mock_mode": True, "root_path": "/workspace/root"},
+        )
+
+    assert resp.status_code == 200
+    mocked_suggester.assert_awaited_once_with(
+        mock_mode=True,
+        tool_budget=None,
+        root_path="/workspace/root",
+    )
+
+
 def test_post_organize_batches_apply_route_contract(tmp_path):
     client = _client()
     src = tmp_path / "a.txt"

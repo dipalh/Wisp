@@ -111,11 +111,33 @@ function resolveSuggestedPath(rootPath, suggestedPath) {
   return path.join(rootPath, ...suggestedPath.split('/'));
 }
 
+async function syncBackendRoots(roots) {
+  const normalized = [...new Set((roots || []).filter(Boolean).map((item) => path.resolve(item)))];
+  const clearResp = await fetch(`${apiUrl}/api/v1/roots`, { method: 'DELETE' });
+  if (!clearResp.ok) {
+    throw new Error(`Root sync clear failed (HTTP ${clearResp.status})`);
+  }
+  for (const rootPath of normalized) {
+    const addResp = await fetch(`${apiUrl}/api/v1/roots`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: rootPath }),
+    });
+    if (!addResp.ok) {
+      const detail = await addResp.text().catch(() => '');
+      throw new Error(`Root sync add failed for ${rootPath} (HTTP ${addResp.status}): ${detail}`);
+    }
+  }
+  return { ok: true, roots: normalized };
+}
+
 async function fetchOrganizeProposals(rootPath, options = {}) {
+  await syncBackendRoots([rootPath]);
   const resp = await fetch(`${apiUrl}/api/v1/organize/proposals`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
+      root_path: rootPath,
       mock_mode: Boolean(options.mockMode),
       tool_budget: options.toolBudget ?? null,
     }),
@@ -511,6 +533,10 @@ ipcMain.handle('folder:scan', async (_, rootPath) => {
   return node;
 });
 
+ipcMain.handle('roots:sync', async (_, roots) => {
+  return syncBackendRoots(Array.isArray(roots) ? roots : []);
+});
+
 ipcMain.handle('organize:getProposals', async (_, payload) => {
   const rootPath = typeof payload === 'string' ? payload : payload?.rootPath;
   if (!rootPath) throw new Error('rootPath is required');
@@ -689,6 +715,7 @@ ipcMain.handle('tts:getVoices', async () => {
 });
 
 ipcMain.handle('jobs:startScan', async (_, folders) => {
+  await syncBackendRoots(Array.isArray(folders) ? folders : []);
   const resp = await fetch(`${apiUrl}/api/v1/jobs/scan`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

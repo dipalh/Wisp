@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('wispApi', {
   getUsername: () => ipcRenderer.sendSync('app:getUsername'),
   pickFolder: () => ipcRenderer.invoke('folder:pick'),
+  syncRoots: (roots) => ipcRenderer.invoke('roots:sync', roots),
   scanFolder: (folderPath) => ipcRenderer.invoke('folder:scan', folderPath),
   organizeGetProposals: (payload) => ipcRenderer.invoke('organize:getProposals', payload),
   organizeAcceptProposal: (proposalId, mappings) => ipcRenderer.invoke('organize:acceptProposal', proposalId, mappings),

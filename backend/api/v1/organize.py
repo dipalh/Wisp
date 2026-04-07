@@ -26,6 +26,7 @@ class _AcceptRequest(BaseModel):
 class _ProposalsRequest(BaseModel):
     mock_mode: bool = False
     tool_budget: int | None = None
+    root_path: str | None = None
 
 
 @router.get(
@@ -64,6 +65,7 @@ async def post_proposals(payload: _ProposalsRequest):
         suggestions = await suggest_directories(
             mock_mode=payload.mock_mode,
             tool_budget=payload.tool_budget,
+            root_path=payload.root_path,
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Organizer failed: {e}")
