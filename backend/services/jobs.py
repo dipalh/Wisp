@@ -1,6 +1,12 @@
 """
 In-memory scan job manager.
 
+Legacy note
+-----------
+This module backs the legacy ``api/v1/scan.py`` flow and is not the canonical
+runtime job store for the live app. The production scan/index path uses the
+SQLite-backed ``services.job_db`` plus Celery task execution.
+
 Tracks the lifecycle of a background scan job from creation through
 completion.  Session-scoped — resets when the server restarts, which
 is acceptable for a single-user desktop app.

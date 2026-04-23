@@ -11,7 +11,6 @@ from api.v1.ocr import router as ocr_router
 from api.v1.organize import router as organize_router
 from api.v1.assistant import router as assistant_router
 from api.v1.roots import router as roots_router
-from api.v1.scan import router as scan_router
 from api.v1.search import router as search_router
 from api.v1.debloat import router as debloat_router
 from api.v1.jobs import router as jobs_router
@@ -56,7 +55,6 @@ app.add_middleware(
 
 # Flow 1: Scan / Index
 app.include_router(roots_router, prefix="/api/v1/roots",  tags=["Roots"])
-app.include_router(scan_router,  prefix="/api/v1/scan",   tags=["Scan"])
 
 # Flow 2: Search
 app.include_router(search_router, prefix="/api/v1/search", tags=["Search"])

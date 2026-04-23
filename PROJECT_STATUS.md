@@ -31,13 +31,13 @@ These are the commands and outcomes verified during this pass.
 backend/venv/bin/pytest --collect-only -q backend/tests
 ```
 
-- `215 tests collected`
+- `216 tests collected`
 
 ```bash
 backend/venv/bin/pytest -q backend/tests
 ```
 
-- `40 files / 215 tests passing`
+- `41 files / 216 tests passing`
 
 ### Frontend
 
@@ -99,7 +99,7 @@ The board below is the current source of truth. If an item is in **Done**, it is
 
 | ID | Item | Status |
 |---|---|---|
-| P0.1 | Remove the duplicate legacy scan stack (`/api/v1/scan` + `services.jobs`) or clearly quarantine it from the live product path | Open |
+| P0.1 | Remove the duplicate legacy scan stack (`/api/v1/scan` + `services.jobs`) or clearly quarantine it from the live product path | Partial |
 | P0.2 | Make search and assistant request-scoped by root, not only dependent on shared global root registry | Open |
 | P0.3 | Rotate and remove committed secrets from `backend/.env`; stop treating checked-in credentials as acceptable local state | Open |
 | P0.4 | Make scan/index startup operationally deterministic (`backend + Redis + Celery + Ollama + renderer + Electron`) with a single trusted dev entrypoint | Open |
@@ -127,6 +127,7 @@ The board below is the current source of truth. If an item is in **Done**, it is
 
 | Item | Evidence |
 |---|---|
+| Live app no longer exposes the legacy `/api/v1/scan` surface | [backend/tests/test_main_app_routes.py](/Users/vishnu/Documents/Wisp/backend/tests/test_main_app_routes.py) |
 | Organizer is proposal-first rather than `organizeFolder` deterministic mutation | Organizer runtime policy tests and current Electron preload/main bridge |
 | Action engine is durable, auditable, quarantine-first, and undo-capable | PLAN6 suites; `backend/tests/test_actions_plan6.py`, `test_executor.py`, `test_action_scope.py` |
 | Assistant and search are grounded, state-aware, and degrade explicitly | PLAN7 suites; `backend/tests/test_plan7_contract.py`, `test_assistant_api_contract.py`, `test_search_api.py` |
@@ -205,9 +206,9 @@ The honest framing is:
 ### Major Architecture Drift Still Present
 
 1. `ARCHITECTURE.md` still references **Chroma**, but runtime uses **LanceDB**.
-2. The backend still exposes **two scan systems**:
+2. The backend codebase still contains **two scan systems**, even though only one is now mounted in the live app:
    - live: `/api/v1/jobs/*` + SQLite + Celery
-   - legacy: `/api/v1/scan/*` + in-memory `services.jobs`
+   - legacy (unmounted): `/api/v1/scan/*` + in-memory `services.jobs`
 3. The main Electron process is still a very thick orchestration layer, not a narrow shell.
 4. Search/assistant rely on shared root state instead of purely explicit request scoping.
 
@@ -220,7 +221,7 @@ These are not theoretical. They are the most important issues surfaced by this p
 | Severity | Issue | Evidence |
 |---|---|---|
 | Critical | Committed secrets exist in `backend/.env` | [backend/.env](/Users/vishnu/Documents/Wisp/backend/.env) contains live-looking API keys; this is unacceptable hygiene and should be rotated/removed. |
-| High | Duplicate scan architecture creates confusion and drift | [backend/api/v1/scan.py](/Users/vishnu/Documents/Wisp/backend/api/v1/scan.py) + [backend/services/jobs.py](/Users/vishnu/Documents/Wisp/backend/services/jobs.py) exist alongside the real `/api/v1/jobs` + Celery stack. |
+| High | Duplicate scan architecture still exists in code, even though the live app no longer mounts it | [backend/api/v1/scan.py](/Users/vishnu/Documents/Wisp/backend/api/v1/scan.py) + [backend/services/jobs.py](/Users/vishnu/Documents/Wisp/backend/services/jobs.py) still exist alongside the real `/api/v1/jobs` + Celery stack. |
 | High | Local-dev scan reliability is operationally fragile | Fresh jobs can appear dead if Redis contains stale Celery backlog; this happened during live validation. |
 | High | Planner is real but still shallow | [backend/services/organizer/suggester.py](/Users/vishnu/Documents/Wisp/backend/services/organizer/suggester.py) has a tool loop, but it is still a lightweight schema-driven planner rather than a richer agent runtime. |
 | High | Search/assistant root scope is still not explicit enough | Organizer now accepts explicit `root_path`, but search/assistant still depend on shared registered roots rather than per-request scope. |
@@ -267,8 +268,8 @@ This is a real problem and should eventually be solved in product/dev tooling, n
 
 ### Backend
 
-- `40` test files
-- `215` tests
+- `41` test files
+- `216` tests
 - strongest coverage areas:
   - action safety / undo / root scope
   - organizer contract, tool router, and runtime policy

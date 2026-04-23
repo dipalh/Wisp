@@ -1,6 +1,13 @@
 """
 Scan / Index API — Flow 1 entry points.
 
+Legacy note
+-----------
+This module is no longer mounted in ``backend/main.py`` for the live product
+surface. The canonical scan API is ``/api/v1/jobs/*`` backed by Celery +
+SQLite. This router remains only as a legacy/testing artifact until the old
+scan stack is deleted fully.
+
 Routes
 ------
   POST  /api/v1/scan               Start a background scan+index job
